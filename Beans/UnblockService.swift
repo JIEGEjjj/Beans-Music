@@ -1,6 +1,6 @@
 import Foundation
 
-/// 灰色歌曲 / VIP 试听解锁：仅使用用户导入的自定义音源（JSON 配置 / 落雪 API 服务器）
+/// 灰色歌曲 / VIP 试听解锁：仅使用用户导入的自定义音源（JSON / 落雪 API / LX JavaScript）
 /// 由 PlayerManager 在网易云 / QQ 无完整 URL 时自动调用。
 enum UnblockService {
     struct Resolved {
@@ -44,13 +44,14 @@ enum UnblockService {
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyword.isEmpty else { return nil }
-        let sources = UnblockSourceStore.shared.customSources
+        let jsonSources = UnblockSourceStore.shared.customSources
             .filter { $0.enabled && canUse(source: $0, songSource: songSource, neteaseID: neteaseID, qqMid: qqMid, kugouID: kugouID) }
-        guard !sources.isEmpty else { return nil }
+        let lxScripts = UnblockSourceStore.shared.lxScripts
+        guard !jsonSources.isEmpty || !lxScripts.isEmpty else { return nil }
 
         // 慢源/失效源不要拖住播放：全部候选一起请求，最快命中的播放地址直接返回。
         return await withTaskGroup(of: Resolved?.self) { group in
-            for source in sources {
+            for source in jsonSources {
                 group.addTask {
                     if source.kind == "lx-script" {
                         return await lxScript(source: source, songSource: songSource, neteaseID: neteaseID, qqMid: qqMid, kugouID: kugouID)
@@ -67,6 +68,25 @@ enum UnblockService {
                             kugouID: kugouID
                         )
                     }
+                }
+            }
+            for source in lxScripts where !source.script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                group.addTask {
+                    let url = await LxScriptRuntime.resolve(
+                        source: source,
+                        name: name,
+                        artists: artists,
+                        durationMS: durationMS,
+                        neteaseID: neteaseID,
+                        qqMid: qqMid,
+                        kugouHash: kugouID
+                    )
+                    if let url {
+                        BeansLogger.shared.log("导入 LX 音源命中：\(source.name)", level: .info)
+                        return Resolved(url: url, source: source.name)
+                    }
+                    BeansLogger.shared.log("导入 LX 音源未命中：\(source.name)", level: .debug)
+                    return nil
                 }
             }
             for await result in group {

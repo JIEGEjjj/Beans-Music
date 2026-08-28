@@ -13,6 +13,8 @@ targets:
     type: application
     platform: iOS
     sources: [Beans]
+    frameworks:
+      - JavaScriptCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.beans.app

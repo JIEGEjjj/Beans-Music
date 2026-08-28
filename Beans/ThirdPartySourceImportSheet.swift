@@ -86,11 +86,19 @@ struct ThirdPartySourceImportSheet: View {
         }
     }
 
-    /// 粘贴内容导入（支持单个音源或 JSON 数组）
+    /// 粘贴内容导入（支持单个音源、JSON 数组和落雪 LX JS）
     private func importSource() {
         let input = jsonText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else {
             errorMessage = "请输入音源链接或配置内容"
+            return
+        }
+        if LxScriptRuntime.looksLikeLxScript(input) {
+            store.addLxScript(LxScriptSource(name: "粘贴的 LX 音源", script: input))
+            BeansLogger.shared.log("导入 LX 音源：粘贴内容", level: .info)
+            BeansHaptics.success()
+            ToastCenter.shared.show("已导入 LX 音源")
+            dismiss()
             return
         }
         if let url = URL(string: input), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
@@ -150,16 +158,33 @@ struct ThirdPartySourceImportSheet: View {
         return UnblockSourceStore.guoyuePresetSources
     }
 
-    /// 从文件导入：读取文本后走同一套解析
+    /// 从文件导入：优先识别 LX JS，再回退到 JSON 配置解析。
     private func importFromFile(_ url: URL) {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+        let hasSecurityScope = url.startAccessingSecurityScopedResource()
+        defer {
+            if hasSecurityScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        guard let data = try? Data(contentsOf: url), !data.isEmpty,
+              let text = String(data: data, encoding: .utf8) else {
             errorMessage = "读取文件失败，请选择 .js / .json / .txt 文件"
             return
         }
         jsonText = text
+        if LxScriptRuntime.looksLikeLxScript(text) {
+            let name = url.deletingPathExtension().lastPathComponent
+            let sourceName = name.isEmpty ? "LX 音源" : name
+            store.addLxScript(LxScriptSource(name: sourceName, script: text))
+            BeansLogger.shared.log("从文件导入 LX 音源：\(url.lastPathComponent)", level: .info)
+            BeansHaptics.success()
+            ToastCenter.shared.show("已导入 LX 音源：\(sourceName)")
+            dismiss()
+            return
+        }
         let sources = parseSources(text)
         guard !sources.isEmpty else {
-            errorMessage = "文件中未找到可用的音源配置（JSON 对象 / 数组）"
+            errorMessage = "文件中未找到可用的音源配置（JSON 对象 / 数组或 LX JS）"
             return
         }
         for source in sources {

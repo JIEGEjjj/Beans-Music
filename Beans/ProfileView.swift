@@ -78,6 +78,10 @@ struct ProfileView: View {
             || (platformPrefs.isEnabled(SearchProvider.kugou) && kugouAuth.isLoggedIn)
     }
 
+    private var importedSourceCount: Int {
+        sourceStore.customSources.count + sourceStore.lxScripts.count
+    }
+
     /// 顶部标题 + 右上角设置齿轮
     private var header: some View {
         HStack(alignment: .center) {
@@ -1683,7 +1687,7 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     Spacer()
-                    Text(sourceStore.customSources.isEmpty ? "尚未导入" : "\(sourceStore.customSources.count) 个")
+                    Text(importedSourceCount == 0 ? "尚未导入" : "\(importedSourceCount) 个")
                         .font(BeansFont.appFont(12))
                         .foregroundStyle(Color.beansComment)
                 }
@@ -1714,6 +1718,37 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("删除音源")
+                    }
+                }
+
+                ForEach(sourceStore.lxScripts) { source in
+                    HStack(spacing: 10) {
+                        Image(systemName: "curlybraces.square.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.beansAmber)
+                            .frame(width: 28, height: 28)
+                            .background(Color.beansGlassFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(source.name)
+                                .font(BeansFont.appFont(13, .medium))
+                                .foregroundStyle(Color.beansLabel)
+                                .lineLimit(1)
+                            Text("LX JavaScript 音源")
+                                .font(BeansFont.appFont(10))
+                                .foregroundStyle(Color.beansComment)
+                        }
+                        Spacer()
+                        Button {
+                            sourceStore.removeLxScript(source)
+                            BeansHaptics.tap()
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.red)
+                                .frame(width: 30, height: 30)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("删除 LX 音源")
                     }
                 }
 
