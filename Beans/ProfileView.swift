@@ -508,7 +508,7 @@ struct ProfileView: View {
                     .foregroundStyle(Color.beansComment.opacity(0.85))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("本软件完全免费，全部功能开源 · GitHub：XIaodou0416/Beans-Music")
+                Text("本软件完全免费，全部功能开源 · GitHub：JIEGEjjj/Beans-Music")
                     .font(BeansFont.appFont(11, .semibold))
                     .foregroundStyle(Color.beansAmber)
                     .multilineTextAlignment(.center)
@@ -594,7 +594,7 @@ struct ProfileView: View {
         VStack(spacing: 0) {
             Button {
                 BeansHaptics.tap()
-                if let url = URL(string: "https://github.com/XIaodou0416/Beans-Music") {
+                if let url = URL(string: "https://github.com/JIEGEjjj/Beans-Music") {
                     UIApplication.shared.open(url)
                 }
             } label: {
@@ -607,7 +607,7 @@ struct ProfileView: View {
                         Text("更新地址")
                             .font(BeansFont.appFont(14, .semibold))
                             .foregroundStyle(Color.beansLabel)
-                        Text("GitHub：XIaodou0416/Beans-Music")
+                        Text("GitHub：JIEGEjjj/Beans-Music")
                             .font(BeansFont.appFont(11))
                             .foregroundStyle(Color.beansComment)
                             .lineLimit(1)
