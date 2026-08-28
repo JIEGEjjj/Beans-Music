@@ -108,13 +108,13 @@ final class UnblockSourceStore: ObservableObject {
             savedSources = []
         }
         customSources = Self.seedGuoyuePresets(into: savedSources, defaults: defaults, seedKey: presetSeedKey)
-        enableFreeListenForPresetIfNeeded()
         if let data = defaults.data(forKey: lxScriptsKey),
            let list = try? JSONDecoder().decode([LxScriptSource].self, from: data) {
             lxScripts = list
         } else {
             lxScripts = []
         }
+        enableFreeListenForPresetIfNeeded()
         save()
     }
 
