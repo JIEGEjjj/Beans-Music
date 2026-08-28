@@ -140,7 +140,7 @@ Beans/
 
 ## 🔨 构建
 
-GitHub Actions（`Build Unsigned IPA`）自动构建，产物发布到 [Releases](https://github.com/XIaodou0416/Beans-Music/releases)。
+GitHub Actions（`Build Unsigned IPA`）自动构建，产物发布到 [Releases](https://github.com/JIEGEjjj/Beans-Music/releases)。
 
 本地构建（需要 Mac + Xcode 26）：
 

@@ -5,7 +5,7 @@ import Foundation
 /// 检测 GitHub 最新 Release 并与当前版本比较，发现新版时用于弹窗提示。
 /// 自动检查每次启动一次，手动检查随时可用。
 struct UpdateChecker {
-    static let repoPath = "XIaodou0416/Beans-Music"
+    static let repoPath = "JIEGEjjj/Beans-Music"
     static let releasePageURL = URL(string: "https://github.com/\(repoPath)/releases/latest")!
     private static let latestAPI = URL(string: "https://api.github.com/repos/\(repoPath)/releases/latest")!
     private static let suppressedVersionKey = "beans.updateCheck.suppressedVersion"
