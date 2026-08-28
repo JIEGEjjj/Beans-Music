@@ -42,6 +42,7 @@ struct ProfileView: View {
     @ObservedObject private var qqAuth = QQMusicAuth.shared
     @ObservedObject private var kugouAuth = KugouMusicAuth.shared
     @ObservedObject private var platformPrefs = PlatformPreferenceStore.shared
+    @ObservedObject private var sourceStore = UnblockSourceStore.shared
 
     private var themeMode: BeansThemeMode {
         BeansThemeMode(rawValue: themeModeRaw) ?? .system
@@ -996,6 +997,10 @@ struct SettingsView: View {
     @AppStorage("beans.labelColorHex") private var labelColorHex = ""
     @ObservedObject private var sourceStore = UnblockSourceStore.shared
     @ObservedObject private var platformPrefs = PlatformPreferenceStore.shared
+
+    private var importedSourceCount: Int {
+        sourceStore.customSources.count + sourceStore.lxScripts.count
+    }
 
     @State private var appearanceExpanded = false
     @State private var platformExpanded = false
