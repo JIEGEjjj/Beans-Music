@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Beans Music · 开源音乐播放器</title>
+  <meta name="description" content="Beans Music - iOS 26 原生液态玻璃风格第三方音乐播放器，聚合网易云 / QQ 音乐，纯 AI 开发，完全开源。">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+      body {
+          font-family: 'Inter', system-ui, -apple-system, sans-serif;
+          background-color: #121217;
+          color: #f3f4f6;
+      }
+      .glass-card {
+          background: rgba(255,255,255,0.06);
+          border: 1px solid rgba(255,255,255,0.12);
+          border-radius: 18px;
+      }
+      .glass-card:hover {
+          background: rgba(255,255,255,0.09);
+          border-color: rgba(255,255,255,0.2);
+          transform: translateY(-2px);
+          transition: all .25s ease;
+      }
+      .preview-scroll::-webkit-scrollbar {
+          height: 6px;
+      }
+      .preview-scroll::-webkit-scrollbar-thumb {
+          background-color: rgba(255,255,255,0.25);
+          border-radius: 4px;
+      }
+  </style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-6xl mx-auto px-4 py-10">
+
+      <!-- Header 头部 -->
+      <header class="flex flex-col items-center text-center mb-14">
+          <img src="https://raw.githubusercontent.com/XIaodou0416/Beans-Music/main/Beans/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="Beans Music App Icon" class="w-28 h-28 rounded-2xl shadow-2xl mb-6 object-cover">
+          <h1 class="text-4xl md:text-5xl font-bold mb-3">Beans Music</h1>
+          <p class="text-xl text-gray-300">iOS 26 原生液态玻璃（兼容 iOS 16+）· 聚合网易云 / QQ音乐 · 纯 SwiftUI · 完全开源</p>
+          <div class="flex gap-4 mt-7 flex-wrap justify-center">
+              <a href="https://github.com/XIaodou0416/Beans-Music" target="_blank" rel="noopener" class="px-6 py-3 bg-white text-black rounded-xl font-medium hover:opacity-90 transition">⭐ GitHub 源码</a>
+              <a href="https://github.com/XIaodou0416/Beans-Music/releases" target="_blank" rel="noopener" class="px-6 py-3 bg-emerald-600 rounded-xl font-medium hover:opacity-90 transition">📦 Releases 下载</a>
+              <a href="https://github.com/XIaodou0416/Beans-Music/blob/main/LICENSE" target="_blank" rel="noopener" class="px-6 py-3 glass-card rounded-xl font-medium hover:bg-white/10 transition">📄 MIT License</a>
+          </div>
+      </header>
+
+      <!-- ✨软件预览板块 -->
+      <section class="mb-16">
+          <h2 class="text-2xl font-semibold mb-5">📱 软件预览</h2>
+          <div class="preview-scroll overflow-x-auto flex gap-4 pb-3">
+              <img src="screenshots/home.png" alt="首页" class="h-80 rounded-2xl shrink-0">
+              <img src="screenshots/home-light.png" alt="首页（浅色）" class="h-80 rounded-2xl shrink-0">
+              <img src="screenshots/lyrics.png" alt="歌词页" class="h-80 rounded-2xl shrink-0">
+              <img src="screenshots/player.png" alt="播放封面页" class="h-80 rounded-2xl shrink-0">
+              <img src="screenshots/search.png" alt="搜索页面" class="h-80 rounded-2xl shrink-0">
+              <img src="screenshots/library.png" alt="音乐库" class="h-80 rounded-2xl shrink-0">
+              <img src="screenshots/settings.png" alt="全局设置" class="h-80 rounded-2xl shrink-0">
+              <img src="screenshots/theme-light.png" alt="主题设置（浅色）" class="h-80 rounded-2xl shrink-0">
+          </div>
+      </section>
+
+
+      <!-- 🎨 DIY 美化板块 -->
+      <section class="mb-16">
+          <h2 class="text-2xl font-semibold mb-6">🎨 DIY 美化：你的播放器你做主</h2>
+          <div class="grid md:grid-cols-2 gap-5">
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">🌈 全局主题色盘</h3>
+                  <p class="text-gray-300">内置 9 套主题色一键换肤；更可打开色盘任选颜色，整个 App 的强调色、按钮、进度条全部跟随。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">🖼️ 自定义壁纸库</h3>
+                  <p class="text-gray-300">上传多张壁纸存入壁纸库，随时切换替换；支持浅色 / 深色两套背景，主页、搜索、音乐库全局同步。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">🧊 玻璃材质自由切换</h3>
+                  <p class="text-gray-300">iOS 26 原生液态玻璃与磨砂玻璃一键切换，底栏、卡片、播放器、弹窗质感统一跟随。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">📐 底部布局自由拖动</h3>
+                  <p class="text-gray-300">进度条、控制按钮、指示线支持 XY 自由拖动与缩放，悬浮窗实时预览，一键恢复默认。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">💬 歌词全套定制</h3>
+                  <p class="text-gray-300">当前行 / 未播放行 / 发光颜色色盘任选，渐变、辉光、模糊、字号、对齐、3D 立体倾斜全可调。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">✨ 进度条与氛围</h3>
+                  <p class="text-gray-300">流光 / 辉光 / 极光 / 波浪 4 种进度条样式，DJ 节奏脉冲光效，圆形封面模式 + 自动旋转。</p>
+              </div>
+          </div>
+      </section>
+
+      <!-- 功能特性 -->
+      <section class="mb-16">
+          <h2 class="text-2xl font-semibold mb-6">✨ 为什么它很强大？</h2>
+          <div class="grid md:grid-cols-2 gap-5">
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">🎧 双平台聚合</h3>
+                  <p class="text-gray-300">网易云 / QQ 音乐一键切换：每日推荐、排行榜、推荐歌单、搜索、热门搜索全部跟随平台。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">🔐 双平台账号登录</h3>
+                  <p class="text-gray-300">网易云扫码 / 网页登录、QQ 扫码 / 网页 / Cookie 导入，同步歌单、收藏、听歌排行与 VIP / SVIP 标识。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">🎨 封面即主题</h3>
+                  <p class="text-gray-300">动态封面取色：背景渐变、进度条、按钮、歌词高亮全部实时跟随专辑封面主色。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">💬 专业级歌词定制</h3>
+                  <p class="text-gray-300">逐行跟随、点击跳转、翻译、色盘自定义颜色 / 渐变 / 发光 / 模糊、3D 立体倾斜、长按多选复制。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">🖼️ 液态玻璃界面</h3>
+                  <p class="text-gray-300">iOS 26 原生 Liquid Glass，深浅色自适应，9 套主题色，液态 / 磨砂可切换。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">🎛️ 全自由度定制</h3>
+                  <p class="text-gray-300">自定义壁纸库、全局背景同步、底部布局自由拖动、进度条 4 种样式、DJ 节奏光效。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">⚡ 播放能力拉满</h3>
+                  <p class="text-gray-300">5 档音质、免费听歌、第三方音源、歌曲下载、锁屏控制、后台播放、队列、倍速、睡眠定时。</p>
+              </div>
+              <div class="glass-card p-6">
+                  <h3 class="text-lg font-semibold mb-2">📊 数据全同步</h3>
+                  <p class="text-gray-300">听歌排行、播放历史、歌单云端同步，设置配置支持一键备份与恢复。</p>
+              </div>
+          </div>
+      </section>
+
+      <!-- 关于作者 -->
+      <section class="glass-card p-7 mb-10">
+          <h2 class="text-2xl font-semibold mb-4">🧑‍💻 关于作者</h2>
+          <p class="text-gray-200">作者本人什么都不会 🤡<br>本软件由 OpenAI Codex 编程助手开发，从需求分析、UI 设计到代码实现全程由 AI 完成。<br>连这篇介绍也是 AI 写的。<br><span class="text-gray-400">不喜勿喷，纯新手小学生，欢迎温柔指教 🙏</span></p>
+      </section>
+
+      <!-- 开源说明 -->
+      <section class="glass-card p-7 mb-10">
+          <h2 class="text-2xl font-semibold mb-4">📄 开源说明</h2>
+          <p class="text-gray-200">本项目为<strong>开源软件</strong>（MIT License），代码完全公开透明。</p>
+          <ul class="list-disc pl-5 mt-3 space-y-2 text-gray-300">
+              <li>支持 <strong>Issue 反馈</strong> 与 <strong>Fork 学习</strong>，欢迎任何人学习、修改、二次开发。</li>
+              <li>构建产物（未签名 IPA）发布在 <strong>Releases</strong>，支持 iOS 16+（iOS 26 上为原生液态玻璃），自行签名安装（Sideloadly / AltStore / 爱思助手）。</li>
+              <li>非官方 API 属逆向学习范畴，请尊重各平台服务条款，合理使用。</li>
+          </ul>
+          <div class="flex gap-4 mt-6">
+              <a href="https://github.com/XIaodou0416/Beans-Music" target="_blank" rel="noopener" class="px-5 py-2 bg-white text-black rounded-xl hover:opacity-90 transition">前往 GitHub</a>
+              <a href="https://github.com/XIaodou0416/Beans-Music/releases" target="_blank" rel="noopener" class="px-5 py-2 bg-emerald-600 rounded-xl hover:opacity-90 transition">下载 IPA</a>
+          </div>
+      </section>
+
+      <!-- 风险提示 -->
+      <section class="bg-red-950/40 border border-red-700/50 rounded-2xl p-6">
+          <h3 class="font-bold text-lg mb-2">⚠️ 重要提示</h3>
+          <ol class="list-decimal pl-5 space-y-1 text-red-200">
+              <li>该项目为第三方逆向 API 音乐客户端，<strong>并非网易云音乐、QQ音乐官方软件</strong>，使用有账号封禁风险。</li>
+              <li>IPA 包需要自签才能安装，普通苹果手机不能直接安装。</li>
+          </ol>
+      </section>
+
+      <footer class="text-center text-gray-500 text-sm mt-12">
+          © 2026 Beans Music · 仅供学习研究，禁止用于商业及非法用途 · 音乐版权归各平台所有，请支持正版
+      </footer>
+  </div>
+</body>
+</html>

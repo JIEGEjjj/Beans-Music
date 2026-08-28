@@ -1,0 +1,131 @@
+name: Build Unsigned IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '是否发布 GitHub Release（false = 只构建 IPA 供测试）'
+        required: false
+        default: 'false'
+        type: boolean
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-ipa:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Bump build number (版本号由维护者在 project.yml 手动改，CI 只递增内部构建号)
+        id: bump
+        run: |
+          python3 - <<'PYEOF'
+          import re
+          path = 'project.yml'
+          with open(path) as f:
+              content = f.read()
+          def bump_build(m):
+              return 'CURRENT_PROJECT_VERSION: "' + str(int(m.group(1)) + 1) + '"'
+          content, n2 = re.subn(r'CURRENT_PROJECT_VERSION:\s*"(\d+)"', bump_build, content)
+          with open(path, 'w') as f:
+              f.write(content)
+          ver = re.search(r'MARKETING_VERSION:\s*"([^"]+)"', content).group(1)
+          build = re.search(r'CURRENT_PROJECT_VERSION:\s*"(\d+)"', content).group(1)
+          print('::notice title=Version::Building %s (build %s)' % (ver, build))
+          with open('version.txt', 'w') as f:
+              f.write(ver)
+          with open('build.txt', 'w') as f:
+              f.write(build)
+          PYEOF
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          VER=$(cat version.txt)
+          BUILD=$(cat build.txt)
+          echo "Building with MARKETING_VERSION=$VER CURRENT_PROJECT_VERSION=$BUILD"
+          echo "BUILD_NUMBER=$BUILD" >> "$GITHUB_ENV"
+          echo "VERSION_LABEL=$VER" >> "$GITHUB_ENV"
+          echo "VERSION_TAG=v$VER" >> "$GITHUB_ENV"
+          xcodebuild \
+            -project Beans.xcodeproj \
+            -scheme Beans \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            MARKETING_VERSION="$VER" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Verify version in built app
+        run: |
+          echo "== project.yml =="
+          grep -E "MARKETING_VERSION|CURRENT_PROJECT_VERSION" project.yml
+          echo "== built Info.plist =="
+          plutil -p build/Build/Products/Release-iphoneos/Beans.app/Info.plist | grep -E "CFBundleShortVersionString|CFBundleVersion"
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Beans.app Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload Beans-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Beans-unsigned-ipa
+          path: Beans-unsigned.ipa
+
+      - name: Build release notes from CHANGELOG
+        run: |
+          python3 - <<'PYEOF'
+          import re
+          ver = open('version.txt').read().strip()
+          content = open('CHANGELOG.md', encoding='utf-8').read()
+          m = re.search(r'^##\s+' + re.escape(ver) + r'\s*$([\s\S]*?)(?=^##\s|\Z)', content, re.M)
+          body = m.group(1).strip() if m else ('版本 ' + ver + ' 的更新内容。')
+          body = '# Beans Music ' + ver + '\n\n' + body + '\n'
+          with open('release_body.md', 'w', encoding='utf-8') as f:
+              f.write(body)
+          print(body)
+          PYEOF
+
+      - name: Publish Release
+        if: success() && (github.event_name != 'workflow_dispatch' || github.event.inputs.publish_release == 'true')
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.VERSION_TAG }}
+          name: Beans Music ${{ env.VERSION_LABEL }}
+          body_path: release_body.md
+          files: Beans-unsigned.ipa
+          update_release_body: true
+          update_release_name: true
+          update_release_assets: true
+
+      - name: Commit version bump back
+        if: success() && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add project.yml
+          if git diff --cached --quiet; then
+            echo "no version change to commit"
+          else
+            git commit -m "chore: bump build to $(cat version.txt) [skip ci]"
+            git push
+          fi

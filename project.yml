@@ -1,0 +1,49 @@
+name: Beans
+
+options:
+  deploymentTarget:
+    iOS: "15.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+
+targets:
+  Beans:
+    type: application
+    platform: iOS
+    sources: [Beans]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beans.app
+        MARKETING_VERSION: "1.5.3"
+        CURRENT_PROJECT_VERSION: "34"
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_OBJC_BRIDGING_HEADER: Beans/Beans-Bridging-Header.h
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: Beans/Info.plist
+      properties:
+        CFBundleDisplayName: Beans Music
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIBackgroundModes: [audio]
+        UILaunchScreen:
+          UIImageName: LaunchBackground
+          UIColorName: LaunchBackgroundColor
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+
+schemes:
+  Beans:
+    build:
+      targets:
+        Beans: all
+    run:
+      config: Debug
+    archive:
+      config: Release

@@ -1,0 +1,11 @@
+*.xcodeproj/
+build/
+.DS_Store
+version.txt
+*.ipa
+work/
+_*.swift
+_*.py
+_*.ps1
+_*.js
+_*.txt
