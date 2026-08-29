@@ -60,6 +60,11 @@ final class PlatformPreferenceStore: ObservableObject {
         isEnabled(provider) ? provider : enabledLibraryProviders.first ?? .netease
     }
 
+    func resetToDefault() {
+        selectedRaw = Set(SearchProvider.allCases.map(\.rawValue))
+        save()
+    }
+
     private func normalize() {
         let allowed = Set(SearchProvider.allCases.map(\.rawValue))
         selectedRaw = selectedRaw.intersection(allowed)

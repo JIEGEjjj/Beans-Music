@@ -60,12 +60,17 @@ struct QueueView: View {
                     .font(BeansFont.appFont(15, isCurrent ? .semibold : .regular))
                     .foregroundStyle(isCurrent ? Color.beansAmber : Color.beansLabel)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 Text(song.artists)
                     .font(BeansFont.appFont(12))
                     .foregroundStyle(Color.beansComment)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
-            Spacer()
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 0)
             if isCurrent {
                 if player.isPlaying {
                     NowPlayingIndicator()
@@ -80,6 +85,7 @@ struct QueueView: View {
                     .foregroundStyle(Color.beansComment)
             }
         }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .contentShape(Rectangle())

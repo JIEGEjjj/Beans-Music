@@ -38,11 +38,10 @@ struct ProfileView: View {
     @State private var pendingUpdateInfo: UpdateChecker.ReleaseInfo?
     @State private var updateShareFile: ShareFileItem?
     @State private var updateShareFileURL: URL?
-    @State private var showCommunityQR = false
+    @State private var didRefreshProfileAccount = false
     @ObservedObject private var qqAuth = QQMusicAuth.shared
     @ObservedObject private var kugouAuth = KugouMusicAuth.shared
     @ObservedObject private var platformPrefs = PlatformPreferenceStore.shared
-    @ObservedObject private var sourceStore = UnblockSourceStore.shared
 
     private var themeMode: BeansThemeMode {
         BeansThemeMode(rawValue: themeModeRaw) ?? .system
@@ -77,10 +76,6 @@ struct ProfileView: View {
         (platformPrefs.isEnabled(SearchProvider.netease) && auth.isLoggedIn)
             || (platformPrefs.isEnabled(SearchProvider.qq) && qqAuth.isLoggedIn)
             || (platformPrefs.isEnabled(SearchProvider.kugou) && kugouAuth.isLoggedIn)
-    }
-
-    private var importedSourceCount: Int {
-        sourceStore.customSources.count + sourceStore.lxScripts.count
     }
 
     /// 顶部标题 + 右上角设置齿轮
@@ -140,9 +135,13 @@ struct ProfileView: View {
             }
             .beansScrollIndicatorsHidden()
         }
-        .task(id: auth.isLoggedIn) {
+        .task {
+            guard !didRefreshProfileAccount else { return }
+            didRefreshProfileAccount = true
             await auth.refreshAccount()
-            await qqAuth.fetchVIPStatus()
+            if qqAuth.isLoggedIn {
+                await qqAuth.fetchVIPStatus()
+            }
         }
         .sheet(isPresented: $showHistory) {
             HistoryView()
@@ -165,10 +164,6 @@ struct ProfileView: View {
         }
         .sheet(isPresented: $showUsageGuide) {
             UsageGuideSheet()
-        }
-        .sheet(isPresented: $showCommunityQR) {
-            CommunityQRSheet()
-                .environmentObject(theme)
         }
         .sheet(item: $updateShareFile, onDismiss: cleanupUpdateShareFile) { item in
             ShareSheet(items: [item.url])
@@ -369,7 +364,7 @@ struct ProfileView: View {
                 theme.applyWallpaper(at: path)
             } label: {
                 Group {
-                    if let img = UIImage(contentsOfFile: path) {
+                    if let img = BeansImageFileCache.image(at: path) {
                         Image(uiImage: img)
                             .resizable()
                             .scaledToFill()
@@ -681,7 +676,9 @@ struct ProfileView: View {
     private var communityCard: some View {
         Button {
             BeansHaptics.tap()
-            showCommunityQR = true
+            if let url = URL(string: "https://t.me/+k8oYhsIU4sgzOTM1") {
+                UIApplication.shared.open(url)
+            }
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "person.2.fill")
@@ -692,12 +689,12 @@ struct ProfileView: View {
                     Text("交流群")
                         .font(BeansFont.appFont(14, .semibold))
                         .foregroundStyle(Color.beansLabel)
-                    Text("点击查看二维码")
+                    Text("点击跳转 Telegram")
                         .font(BeansFont.appFont(11))
                         .foregroundStyle(Color.beansComment)
                 }
                 Spacer()
-                Image(systemName: "qrcode.viewfinder")
+                Image(systemName: "arrow.up.forward.app")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color.beansComment)
             }
@@ -816,6 +813,7 @@ struct AccountHubSheet: View {
         .confirmationDialog("退出网易云登录？", isPresented: $confirmNeteaseLogout, titleVisibility: .visible) {
             Button("退出登录", role: .destructive) {
                 auth.logout()
+                WebLoginDataCleaner.clearNetEase()
                 ToastCenter.shared.show("已退出网易云账号")
             }
             Button("取消", role: .cancel) {}
@@ -823,6 +821,7 @@ struct AccountHubSheet: View {
         .confirmationDialog("退出 QQ 音乐？", isPresented: $confirmQQLogout, titleVisibility: .visible) {
             Button("退出登录", role: .destructive) {
                 qqAuth.logout()
+                WebLoginDataCleaner.clearQQMusic()
                 ToastCenter.shared.show("已退出 QQ 音乐")
             }
             Button("取消", role: .cancel) {}
@@ -830,6 +829,7 @@ struct AccountHubSheet: View {
         .confirmationDialog("退出酷狗音乐？", isPresented: $confirmKugouLogout, titleVisibility: .visible) {
             Button("退出登录", role: .destructive) {
                 kugouAuth.logout()
+                WebLoginDataCleaner.clearKugou()
                 ToastCenter.shared.show("已退出酷狗音乐")
             }
             Button("取消", role: .cancel) {}
@@ -987,20 +987,20 @@ struct SettingsView: View {
     @AppStorage("beans.audioQuality") private var audioQualityRaw = BeansAudioQuality.exhigh.rawValue
     /// 底栏是否显示文字（关闭后只显示图标）
     @AppStorage("beans.tabLabelsVisible") private var tabLabelsVisible = true
-    /// 官方地址不可用时，是否尝试用户导入的音源
-    @AppStorage("beans.enableUnblock") private var enableImportedSources = true
+    @AppStorage("beans.legacyTabCornerRadius") private var legacyTabCornerRadius = 32.0
+    @AppStorage("beans.legacyTabWidth") private var legacyTabWidth = 356.0
+    @AppStorage("beans.legacyTabOffsetX") private var legacyTabOffsetX = 0.0
+    @AppStorage("beans.legacyTabOffsetY") private var legacyTabOffsetY = 0.0
+    /// 官方地址不可用时，是否尝试内置音源
+    @AppStorage("beans.enableUnblock") private var enableBuiltInSources = true
     /// 第三方音源播放会员歌成功时提醒，默认开启
     @AppStorage("beans.showThirdPartyVIPNotice") private var showThirdPartyVIPNotice = true
-    /// 可选高刷新率动效，默认关闭以降低发热
-    @AppStorage("beans.enableHighRefresh") private var enableHighRefresh = false
+    /// 可选高刷新率动效，默认开启；可手动关闭以降低发热
+    @AppStorage("beans.enableHighRefresh") private var enableHighRefresh = true
     @AppStorage("beans.audio.mixothers.v1") private var mixesWithOthers = false
     @AppStorage("beans.labelColorHex") private var labelColorHex = ""
     @ObservedObject private var sourceStore = UnblockSourceStore.shared
     @ObservedObject private var platformPrefs = PlatformPreferenceStore.shared
-
-    private var importedSourceCount: Int {
-        sourceStore.customSources.count + sourceStore.lxScripts.count
-    }
 
     @State private var appearanceExpanded = false
     @State private var platformExpanded = false
@@ -1015,14 +1015,20 @@ struct SettingsView: View {
     @State private var showRestorePicker = false
     @State private var pendingRestore: [String: Any]?
     @State private var showRestoreConfirm = false
+    @State private var showResetSettingsConfirm = false
+    @State private var backupIncludeAccounts = false
+    @State private var backupIncludeWallpapers = true
     @State private var backupMessage: String?
     /// 日志
     @State private var showLogViewer = false
-    @State private var showSourceImporter = false
     @State private var showUsageGuide = false
 
     private var themeMode: BeansThemeMode {
         BeansThemeMode(rawValue: themeModeRaw) ?? .system
+    }
+
+    private var presetSourceCount: Int {
+        sourceStore.presetSources.count
     }
 
     var body: some View {
@@ -1070,10 +1076,6 @@ struct SettingsView: View {
         .sheet(isPresented: $showChangelog) {
             ChangelogListView()
         }
-        .sheet(isPresented: $showSourceImporter) {
-            ThirdPartySourceImportSheet()
-                .environmentObject(theme)
-        }
         .sheet(isPresented: $showUsageGuide) {
             UsageGuideSheet()
         }
@@ -1106,6 +1108,14 @@ struct SettingsView: View {
                 applyRestore(pendingRestore)
             }
             Button("取消", role: .cancel) {}
+        }
+        .confirmationDialog("重置所有设置？", isPresented: $showResetSettingsConfirm, titleVisibility: .visible) {
+            Button("重置设置", role: .destructive) {
+                resetAllSettingsKeepingAccounts()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("会恢复主题、播放器、平台显示、壁纸、布局等设置，但保留已登录账号。")
         }
     }
 
@@ -1175,7 +1185,7 @@ struct SettingsView: View {
     private var appearanceSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "外观")
-            // 主题模式：液态玻璃行，点击展开 / 收起全部外观设置
+            // 外观设置行：点击展开 / 收起全部外观设置
             Button {
                 BeansHaptics.select()
                 withAnimation(.easeInOut(duration: 0.25)) {
@@ -1235,13 +1245,26 @@ struct SettingsView: View {
 
                 Divider().overlay(Color.beansComment.opacity(0.15))
 
-                // 玻璃材质：液态玻璃仅 iOS 26+ 可用，低版本隐藏该开关（自动使用磨砂玻璃）
-                if #available(iOS 26, *) {
-                    Picker("玻璃材质", selection: Binding(
-                        get: { theme.fxStyle },
-                        set: { theme.setFXStyle($0) }
+                legacyTabBarSettings
+
+                Divider().overlay(Color.beansComment.opacity(0.15))
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Color.beansAmber)
+                            .frame(width: 28)
+                        Text("全局 UI 样式")
+                            .font(BeansFont.appFont(15))
+                            .foregroundStyle(Color.beansLabel)
+                        Spacer()
+                    }
+                    Picker("全局 UI 样式", selection: Binding(
+                        get: { theme.uiStyle },
+                        set: { theme.setUIStyle($0) }
                     )) {
-                        ForEach(BeansFXStyle.allCases, id: \.self) { style in
+                        ForEach(BeansUIStyle.allCases, id: \.self) { style in
                             Text(style.title).tag(style)
                         }
                     }
@@ -1551,7 +1574,7 @@ struct SettingsView: View {
                         Text("播放设置")
                             .font(BeansFont.appFont(15))
                             .foregroundStyle(Color.beansLabel)
-                        Text("\(BeansAudioQuality(rawValue: audioQualityRaw)?.displayName ?? "高品质") · \(enableImportedSources ? "导入音源已开" : "导入音源已关")")
+                        Text("\(BeansAudioQuality(rawValue: audioQualityRaw)?.displayName ?? "高品质") · \(enableBuiltInSources ? "内置音源已开" : "内置音源已关")")
                             .font(BeansFont.appFont(11))
                             .foregroundStyle(Color.beansComment)
                             .lineLimit(1)
@@ -1629,7 +1652,7 @@ struct SettingsView: View {
                             Text("高刷新动效")
                                 .font(BeansFont.appFont(15))
                                 .foregroundStyle(Color.beansLabel)
-                            Text("默认关闭以降低发热；开启后在支持 ProMotion 的设备上动画更丝滑")
+                            Text("默认开启；允许系统高刷动画，不再常驻空转刷新")
                                 .font(BeansFont.appFont(11))
                                 .foregroundStyle(Color.beansComment)
                         }
@@ -1640,17 +1663,17 @@ struct SettingsView: View {
 
                 Divider().overlay(Color.beansComment.opacity(0.15))
 
-                Toggle(isOn: $enableImportedSources) {
+                Toggle(isOn: $enableBuiltInSources) {
                     HStack(spacing: 12) {
                         Image(systemName: "externaldrive.connected.to.line.below")
                             .font(.system(size: 14))
-                            .foregroundStyle(Color.beansAmber)
-                            .frame(width: 28)
+                        .foregroundStyle(Color.beansAmber)
+                        .frame(width: 28)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("使用导入音源")
+                            Text("使用内置音源")
                                 .font(BeansFont.appFont(15))
                                 .foregroundStyle(Color.beansLabel)
-                            Text("仅在官方地址不可用或为试听片段时回退")
+                            Text("仅在官方地址不可用或为试听片段时回退到预设")
                                 .font(BeansFont.appFont(11))
                                 .foregroundStyle(Color.beansComment)
                         }
@@ -1669,7 +1692,7 @@ struct SettingsView: View {
                             Text("第三方播放会员歌提醒")
                                 .font(BeansFont.appFont(15))
                                 .foregroundStyle(Color.beansLabel)
-                            Text("未识别到对应会员且会员歌曲通过导入音源播放成功时提示")
+                            Text("未识别到对应会员且会员歌曲通过内置音源播放成功时提示")
                                 .font(BeansFont.appFont(11))
                                 .foregroundStyle(Color.beansComment)
                         }
@@ -1679,32 +1702,26 @@ struct SettingsView: View {
                 .tint(Color.beansAmber)
 
                 HStack(spacing: 10) {
-                    Button {
-                        BeansHaptics.tap()
-                        showSourceImporter = true
-                    } label: {
-                        Label("导入音源", systemImage: "square.and.arrow.down")
-                            .font(BeansFont.appFont(13, .semibold))
-                            .foregroundStyle(Color.beansAmber)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(.ultraThinMaterial, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.beansAmber)
+                    Text("内置音源预设")
+                        .font(BeansFont.appFont(13, .semibold))
+                        .foregroundStyle(Color.beansLabel)
                     Spacer()
-                    Text(importedSourceCount == 0 ? "尚未导入" : "\(importedSourceCount) 个")
+                    Text("\(presetSourceCount) 个")
                         .font(BeansFont.appFont(12))
                         .foregroundStyle(Color.beansComment)
                 }
 
-                ForEach(sourceStore.customSources) { source in
+                ForEach(sourceStore.presetSources) { source in
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(source.name)
                                 .font(BeansFont.appFont(13, .medium))
                                 .foregroundStyle(Color.beansLabel)
                                 .lineLimit(1)
-                            Text(source.headers["source"]?.uppercased() ?? source.kind)
+                            Text("内置预设 · \(source.kind.replacingOccurrences(of: "paid-", with: "").uppercased())")
                                 .font(BeansFont.appFont(10))
                                 .foregroundStyle(Color.beansComment)
                         }
@@ -1712,48 +1729,6 @@ struct SettingsView: View {
                         Toggle("", isOn: sourceEnabledBinding(source.id))
                             .labelsHidden()
                             .tint(Color.beansAmber)
-                        Button {
-                            sourceStore.remove(source)
-                            BeansHaptics.tap()
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.red)
-                                .frame(width: 30, height: 30)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("删除音源")
-                    }
-                }
-
-                ForEach(sourceStore.lxScripts) { source in
-                    HStack(spacing: 10) {
-                        Image(systemName: "curlybraces.square.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color.beansAmber)
-                            .frame(width: 28, height: 28)
-                            .background(Color.beansGlassFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(source.name)
-                                .font(BeansFont.appFont(13, .medium))
-                                .foregroundStyle(Color.beansLabel)
-                                .lineLimit(1)
-                            Text("LX JavaScript 音源")
-                                .font(BeansFont.appFont(10))
-                                .foregroundStyle(Color.beansComment)
-                        }
-                        Spacer()
-                        Button {
-                            sourceStore.removeLxScript(source)
-                            BeansHaptics.tap()
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.red)
-                                .frame(width: 30, height: 30)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("删除 LX 音源")
                     }
                 }
 
@@ -1770,10 +1745,10 @@ struct SettingsView: View {
 
     private func sourceEnabledBinding(_ id: String) -> Binding<Bool> {
         Binding(
-            get: { sourceStore.customSources.first(where: { $0.id == id })?.enabled ?? false },
+            get: { sourceStore.presetSources.first(where: { $0.id == id })?.enabled ?? false },
             set: { value in
-                guard let index = sourceStore.customSources.firstIndex(where: { $0.id == id }) else { return }
-                sourceStore.customSources[index].enabled = value
+                guard let index = sourceStore.presetSources.firstIndex(where: { $0.id == id }) else { return }
+                sourceStore.presetSources[index].enabled = value
             }
         )
     }
@@ -1848,15 +1823,36 @@ struct SettingsView: View {
     private var backupSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: "备份与恢复")
+            VStack(spacing: 10) {
+                Toggle("备份登录信息", isOn: $backupIncludeAccounts)
+                    .tint(Color.beansAmber)
+                    .font(BeansFont.appFont(13))
+                Divider().opacity(0.35)
+                Toggle("备份壁纸图片", isOn: $backupIncludeWallpapers)
+                    .tint(Color.beansAmber)
+                    .font(BeansFont.appFont(13))
+                Text("默认不带账号登录信息；关闭壁纸后只备份普通设置，不写入壁纸图片数据")
+                    .font(BeansFont.appFont(11))
+                    .foregroundStyle(Color.beansComment)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(14)
+            .background {
+                BeansGlass(shape: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
             HStack(spacing: 10) {
                 backupActionButton(icon: "square.and.arrow.up", title: "导出备份") {
                     BeansHaptics.tap()
-                    exportBackup()
+                    exportBackup(includeAccounts: backupIncludeAccounts, includeWallpapers: backupIncludeWallpapers)
                 }
                 backupActionButton(icon: "square.and.arrow.down", title: "导入恢复") {
                     BeansHaptics.tap()
                     showRestorePicker = true
                 }
+            }
+            backupActionButton(icon: "arrow.counterclockwise.circle", title: "重置所有设置（保留登录）") {
+                BeansHaptics.tap()
+                showResetSettingsConfirm = true
             }
             if let backupMessage {
                 Text(backupMessage)
@@ -1899,6 +1895,14 @@ struct SettingsView: View {
             || key == "beans.wallpapers.deleted"
     }
 
+    private static func isWallpaperBackupKey(_ key: String) -> Bool {
+        key == "beans.background.image"
+            || key == "beans.wallpapers.list"
+            || key == "beans.wallpapers.data"
+            || key == "beans.lyricBackground.image"
+            || key == "beans.lyricBackground.data"
+    }
+
     private static func isSystemBackupKey(_ key: String) -> Bool {
         key.hasPrefix("Apple")
             || key.hasPrefix("NS")
@@ -1910,22 +1914,25 @@ struct SettingsView: View {
         key.hasPrefix("beans.") && !isSystemBackupKey(key)
     }
 
-    private static func isExcludedBackupKey(_ key: String) -> Bool {
-        isAccountBackupKey(key)
+    private static func isExcludedBackupKey(_ key: String, includeAccounts: Bool = false, includeWallpapers: Bool = true) -> Bool {
+        (!includeAccounts && isAccountBackupKey(key))
+            || (!includeWallpapers && isWallpaperBackupKey(key))
             || isPrivacyBackupKey(key)
             || key == "beans.backup.meta"
             || key == "beans.font.restore"
     }
 
     /// 导出：收集本 App 设置，排除账号、搜索记录和日志，交给系统原生导出面板
-    private func exportBackup() {
+    private func exportBackup(includeAccounts: Bool, includeWallpapers: Bool) {
         let defaults = UserDefaults.standard
         var payload: [String: Any] = [:]
-        theme.refreshWallpaperBackupForExport()
-        LyricBackgroundStore.refreshForExport()
+        if includeWallpapers {
+            theme.refreshWallpaperBackupForExport()
+            LyricBackgroundStore.refreshForExport()
+        }
         for (key, value) in defaults.dictionaryRepresentation() {
             guard Self.isBackupCandidateKey(key) else { continue }
-            guard !Self.isExcludedBackupKey(key) else { continue }
+            guard !Self.isExcludedBackupKey(key, includeAccounts: includeAccounts, includeWallpapers: includeWallpapers) else { continue }
             // 超大原始 Data 直接跳过（壁纸 base64 已以字符串形式存于 beans.wallpapers.data，不受影响）
             if let data = value as? Data, data.count > 2 * 1024 * 1024 { continue }
             let safe = backupJSONSafe(value)
@@ -1945,7 +1952,14 @@ struct SettingsView: View {
             "app": "Beans Music",
             "created": ISO8601DateFormatter().string(from: Date()),
             "version": version,
-            "excluded": "account, search history, logs",
+            "includedAccounts": includeAccounts,
+            "includedWallpapers": includeWallpapers,
+            "excluded": [
+                includeAccounts ? nil : "account",
+                includeWallpapers ? nil : "wallpapers",
+                "search history",
+                "logs",
+            ].compactMap { $0 }.joined(separator: ", "),
         ] as [String: Any]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else {
             backupMessage = "备份生成失败：存在无法序列化的设置项"
@@ -1954,7 +1968,7 @@ struct SettingsView: View {
         }
         backupDoc = BackupDocument(data: data)
         backupMessage = nil
-        BeansLogger.shared.log("导出配置备份（\(payload.count) 项，已排除账号/搜索记录/日志，含壁纸/字体/歌单/播放器布局）", level: .info)
+        BeansLogger.shared.log("导出配置备份（\(payload.count) 项，账号=\(includeAccounts ? "包含" : "排除") 壁纸=\(includeWallpapers ? "包含" : "排除")）", level: .info)
         showExportBackup = true
     }
 
@@ -1982,7 +1996,7 @@ struct SettingsView: View {
         var count = 0
         for (key, value) in json {
             guard Self.isBackupCandidateKey(key) else { continue }
-            guard !Self.isExcludedBackupKey(key) else { continue }
+            guard !Self.isExcludedBackupKey(key, includeAccounts: true, includeWallpapers: true) else { continue }
             guard let restored = backupPlistSafe(value) else { continue }
             defaults.set(restored, forKey: key)
             count += 1
@@ -2009,6 +2023,106 @@ struct SettingsView: View {
         } else {
             backupMessage = "备份中未找到可恢复的设置"
         }
+    }
+
+    private var legacyTabBarSettings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "iphone.gen3")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.beansAmber)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("低系统悬浮底栏")
+                        .font(BeansFont.appFont(15))
+                        .foregroundStyle(Color.beansLabel)
+                    Text("仅 iOS 26 以下生效，用来模拟高系统悬浮底栏")
+                        .font(BeansFont.appFont(11))
+                        .foregroundStyle(Color.beansComment)
+                }
+                Spacer()
+                Button("默认") {
+                    resetLegacyTabBar()
+                    BeansHaptics.select()
+                }
+                .font(BeansFont.appFont(12, .semibold))
+                .foregroundStyle(Color.beansAmber)
+                .buttonStyle(.plain)
+            }
+            settingsSlider("圆润度", valueText: "\(Int(legacyTabCornerRadius))") {
+                Slider(value: $legacyTabCornerRadius, in: 18...42, step: 1)
+                    .tint(Color.beansAmber)
+            }
+            settingsSlider("长度", valueText: "\(Int(legacyTabWidth))") {
+                Slider(value: $legacyTabWidth, in: 300...420, step: 1)
+                    .tint(Color.beansAmber)
+            }
+            settingsSlider("X 位置", valueText: signedIntText(legacyTabOffsetX)) {
+                Slider(value: $legacyTabOffsetX, in: -40...40, step: 1)
+                    .tint(Color.beansAmber)
+            }
+            settingsSlider("Y 位置", valueText: signedIntText(legacyTabOffsetY)) {
+                Slider(value: $legacyTabOffsetY, in: -36...36, step: 1)
+                    .tint(Color.beansAmber)
+            }
+        }
+        .padding(14)
+        .background {
+            BeansGlass(shape: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+
+    private func resetLegacyTabBar() {
+        legacyTabCornerRadius = 32
+        legacyTabWidth = 356
+        legacyTabOffsetX = 0
+        legacyTabOffsetY = 0
+    }
+
+    private func signedIntText(_ value: Double) -> String {
+        let intValue = Int(value.rounded())
+        if intValue == 0 { return "0" }
+        return intValue > 0 ? "+\(intValue)" : "\(intValue)"
+    }
+
+    private func settingsSlider<Content: View>(_ title: String, valueText: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(spacing: 5) {
+            HStack {
+                Text(title)
+                    .font(BeansFont.appFont(13))
+                    .foregroundStyle(Color.beansLabel)
+                Spacer()
+                Text(valueText)
+                    .font(BeansFont.appFont(12, .semibold))
+                    .foregroundStyle(Color.beansAmber)
+            }
+            content()
+        }
+    }
+
+    private func resetAllSettingsKeepingAccounts() {
+        let defaults = UserDefaults.standard
+        var removed = 0
+        for key in defaults.dictionaryRepresentation().keys {
+            guard Self.isBackupCandidateKey(key) else { continue }
+            guard !Self.isAccountBackupKey(key) else { continue }
+            guard !Self.isSystemBackupKey(key) else { continue }
+            guard key != "beans.disclaimerAccepted" else { continue }
+            defaults.removeObject(forKey: key)
+            removed += 1
+        }
+        theme.set(.amber)
+        theme.clearCustomAccent()
+        theme.setBackground("")
+        theme.setBackgroundSyncAll(true)
+        theme.clearAllWallpapers()
+        theme.setUIStyle(.liquid)
+        LyricBackgroundStore.clear()
+        PlatformPreferenceStore.shared.resetToDefault()
+        BeansHaptics.success()
+        backupMessage = "已重置 \(removed) 项设置，登录信息已保留"
+        ToastCenter.shared.show("设置已重置")
+        BeansLogger.shared.log("重置所有设置：移除 \(removed) 项，保留登录信息", level: .info)
     }
 
     /// 任意 UserDefaults 值 → JSON 可序列化（Data 转 base64、Date 转时间戳）
@@ -2112,7 +2226,7 @@ struct SettingsView: View {
                 theme.applyWallpaper(at: path)
             } label: {
                 Group {
-                    if let img = UIImage(contentsOfFile: path) {
+                    if let img = BeansImageFileCache.image(at: path) {
                         Image(uiImage: img)
                             .resizable()
                             .scaledToFill()

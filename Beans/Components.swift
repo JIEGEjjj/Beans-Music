@@ -118,15 +118,19 @@ struct WallpaperImage: View {
     }
 }
 
-// MARK: - 全局玻璃材质容器（跟随设置：液态玻璃 / 磨砂玻璃）
+// MARK: - 全局容器（跟随全局 UI 样式）
 
 struct BeansGlass<S: Shape>: View {
-    @AppStorage("beans.fxStyle") private var fxStyleRaw = BeansFXStyle.liquid.rawValue
+    @AppStorage("beans.uiStyle") private var uiStyleRaw = BeansUIStyle.liquid.rawValue
 
     let shape: S
 
+    private var uiStyle: BeansUIStyle {
+        BeansUIStyle(rawValue: uiStyleRaw) ?? .liquid
+    }
+
     private var isLiquid: Bool {
-        (BeansFXStyle(rawValue: fxStyleRaw) ?? .liquid) == .liquid
+        uiStyle == .liquid
     }
 
     var body: some View {
@@ -142,21 +146,45 @@ struct BeansGlass<S: Shape>: View {
                     .fill(.ultraThinMaterial)
             }
         } else {
-            shape
-                .fill(.ultraThinMaterial)
+            switch uiStyle {
+            case .clear, .liquid:
+                shape
+                    .fill(.ultraThinMaterial)
+            case .compact:
+                shape
+                    .fill(Color.beansGlassFill.opacity(0.62))
+            case .outline:
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        shape.stroke(Color.beansAmber.opacity(0.30), lineWidth: 0.9)
+                    }
+            }
         }
     }
 }
 
-// MARK: - 玻璃卡片（清透版）
+// MARK: - 通用卡片（跟随全局 UI 样式）
 
 struct GlassCard<Content: View>: View {
     var cornerRadius: CGFloat = 24
-    @AppStorage("beans.fxStyle") private var fxStyleRaw = BeansFXStyle.liquid.rawValue
+    @AppStorage("beans.uiStyle") private var uiStyleRaw = BeansUIStyle.liquid.rawValue
     @ViewBuilder var content: () -> Content
 
+    private var uiStyle: BeansUIStyle {
+        BeansUIStyle(rawValue: uiStyleRaw) ?? .liquid
+    }
+
     private var isLiquid: Bool {
-        (BeansFXStyle(rawValue: fxStyleRaw) ?? .liquid) == .liquid
+        uiStyle == .liquid
+    }
+
+    private var resolvedCornerRadius: CGFloat {
+        uiStyle == .compact ? min(cornerRadius, 16) : cornerRadius
+    }
+
+    private var resolvedPadding: CGFloat {
+        uiStyle == .compact ? 12 : 16
     }
 
     var body: some View {
@@ -164,23 +192,33 @@ struct GlassCard<Content: View>: View {
             if #available(iOS 26, *) {
                 GlassEffectContainer {
                     content()
-                        .padding(16)
-                        .glassEffect(.clear, in: .rect(cornerRadius: cornerRadius))
+                        .padding(resolvedPadding)
+                        .glassEffect(.clear, in: .rect(cornerRadius: resolvedCornerRadius))
                 }
                 .beansCardShadow(radius: 9, y: 3)
             } else {
                 content()
-                    .padding(16)
-                    .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(.ultraThinMaterial))
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                    .padding(resolvedPadding)
+                    .background(RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous).fill(.ultraThinMaterial))
+                    .clipShape(RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous))
                     .beansCardShadow(radius: 9, y: 3)
             }
         } else {
             content()
-                .padding(16)
-                .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(.ultraThinMaterial))
-                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                .beansCardShadow(radius: 9, y: 3)
+                .padding(resolvedPadding)
+                .background {
+                    RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous)
+                        .fill(uiStyle == .compact ? Color.beansGlassFill.opacity(0.62) : Color.clear)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous))
+                }
+                .overlay {
+                    if uiStyle == .outline {
+                        RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous)
+                            .strokeBorder(Color.beansAmber.opacity(0.30), lineWidth: 0.9)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: resolvedCornerRadius, style: .continuous))
+                .beansCardShadow(radius: uiStyle == .compact ? 4 : 9, y: uiStyle == .compact ? 1 : 3)
         }
     }
 }

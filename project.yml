@@ -13,12 +13,10 @@ targets:
     type: application
     platform: iOS
     sources: [Beans]
-    frameworks:
-      - JavaScriptCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.beans.app
-        MARKETING_VERSION: "1.5.4"
+        MARKETING_VERSION: "1.5.5"
         CURRENT_PROJECT_VERSION: "41"
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_OBJC_BRIDGING_HEADER: Beans/Beans-Bridging-Header.h
@@ -37,6 +35,7 @@ targets:
           - UIInterfaceOrientationPortrait
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        CADisableMinimumFrameDurationOnPhone: true
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
 

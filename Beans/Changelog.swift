@@ -6,8 +6,18 @@ struct VersionLog: Identifiable {
     let id: String
     let version: String
     let title: String
+    let notices: [String]
     let features: [String]
     let fixes: [String]
+
+    init(id: String, version: String, title: String, notices: [String] = [], features: [String], fixes: [String]) {
+        self.id = id
+        self.version = version
+        self.title = title
+        self.notices = notices
+        self.features = features
+        self.fixes = fixes
+    }
 }
 
 enum ChangelogStore {
@@ -32,6 +42,38 @@ enum ChangelogStore {
     static var latest: VersionLog? { logs.first }
 
     static let logs: [VersionLog] = [
+        VersionLog(
+            id: "1.5.5",
+            version: "1.5.5",
+            title: "播放流畅度与发热优化",
+            notices: [
+                "从 1.5.4 版本开始，播放器设置已从右上角删除，改为点击中间歌曲正在播放的标题打开。"
+            ],
+            features: [
+                "优化播放中全局刷新策略，移除高刷保持器的常驻空转刷新，降低设置页、我的页面和播放器页面的发热与掉帧",
+                "本地壁纸、歌词背景、设置页缩略图改为复用解码缓存，减少滚动和切换设置时的重复图片解码",
+                "锁屏/系统正在播放封面增加缓存，避免播放状态变化时反复下载和刷新同一张封面"
+            ],
+            fixes: [
+                "修复播放中进度更新过于频繁导致非播放器页面也跟随重绘的问题",
+                "修复重新上传歌词背景或恢复壁纸后，部分位置可能继续显示旧图片缓存的问题"
+            ]
+        ),
+        VersionLog(
+            id: "1.5.4",
+            version: "1.5.4",
+            title: "歌手主页与播放列表体验修复",
+            features: [
+                "歌手主页背景同步主页壁纸"
+            ],
+            fixes: [
+                "修复长歌名撑宽歌曲列表布局的问题，统一使用有限宽度和尾部截断",
+                "修复歌手主页只加载 30 首歌曲的问题，网易云和 QQ 音乐改为分页加载更多歌曲",
+                "重点修复酷狗主页加载任务重复触发，导致结果无限返回和网络请求风暴的问题",
+                "调整播放器底部循环按钮与播放列表按钮为左右对称默认位置，循环 x=-5、播放列表 x=5，y=0",
+                "移除沉浸封面播放器及相关设置，恢复经典播放器界面"
+            ]
+        ),
         VersionLog(
             id: "1.5.3",
             version: "1.5.3",
@@ -58,7 +100,7 @@ enum ChangelogStore {
             features: [
                 "备份功能覆盖更多已调试设置，包含壁纸、字体、播放器布局、自定义音源、本地歌单等本机配置",
                 "我的页面底部新增“交流群”入口，点击后可直接查看群二维码",
-                "榜单详情页顶部信息卡恢复与应用整体一致的液态玻璃效果",
+                "榜单详情页顶部信息卡恢复与应用整体一致的通透卡片效果",
                 "首次引导页新增平台选择，可按需要只显示部分平台",
                 "设置页新增“平台显示”，可随时重新选择需要展示的平台",
                 "主页歌单广场新增收缩/展开，默认收起减少首页长度",
@@ -79,7 +121,7 @@ enum ChangelogStore {
             features: [
                 "播放进度刷新拆分为独立时钟，播放中浏览主页、搜索、音乐库、我的页面更流畅",
                 "播放器设置改为全屏打开，打开后暂停播放器页面 UI 渲染但保持歌曲继续播放",
-                "播放器设置支持收缩分组、紧凑布局和强制液态玻璃卡片",
+                "播放器设置支持收缩分组、紧凑布局和稳定通透卡片",
                 "新增全局主文字颜色自定义，作用于搜索、歌单、我的、设置等页面",
                 "每日推荐、排行榜、QQ 歌单详情新增搜索与随机播放",
                 "壁纸背景同步到更多设置页、歌单、排行榜和每日推荐详情",
@@ -88,7 +130,7 @@ enum ChangelogStore {
                 "修复播放中滑动主页排行榜、打开设置时明显卡顿发热的问题",
                 "修复播放器右上角更多菜单和播放器设置内部分控件偶发需要点多次的问题",
                 "修复排行榜板块在自定义壁纸下出现大块白底的问题",
-                "恢复主页排行榜板块的液态玻璃卡片质感",
+                "恢复主页排行榜板块的通透卡片质感",
                 "备份与恢复已跳过账号 cookie、token 和用户资料",
                 "删除设置页导入日志入口，并将导出日志移入查看日志菜单",
             ]
@@ -204,6 +246,32 @@ private struct VersionLogCard: View {
                 Text(log.title)
                     .font(BeansFont.appFont(14, .semibold))
                     .foregroundStyle(Color.beansLabel)
+            }
+            if !log.notices.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(log.notices, id: \.self) { notice in
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.top, 1)
+                            Text(notice)
+                                .font(BeansFont.appFont(13, .semibold))
+                                .foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    LinearGradient(
+                        colors: [Color.orange, Color.red.opacity(0.88)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                )
             }
             if !log.features.isEmpty {
                 logSection(title: "新增功能", icon: "plus.circle.fill", items: log.features)

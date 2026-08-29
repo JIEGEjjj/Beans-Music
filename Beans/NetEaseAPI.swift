@@ -385,11 +385,44 @@ final class NetEaseAPI {
 
     // MARK: - 歌手主页
 
-    /// 歌手热门歌曲
-    func artistHotSongs(artistID: Int, limit: Int = 50) async throws -> [Song] {
-        let json = try await request("/api/artist/songs", payload: ["id": artistID, "private_cloud": true, "work_type": 1, "order": "hot", "offset": 0, "limit": limit], crypto: "weapi")
-        let list = json["songs"] as? [[String: Any]] ?? []
-        return list.compactMap { Song(json: $0) }
+    /// 歌手热门歌曲（分页加载，避免接口单页最多返回 30 首）
+    func artistHotSongs(artistID: Int, limit: Int = 120) async throws -> [Song] {
+        let targetCount = max(limit, 1)
+        let pageSize = min(targetCount, 30)
+        var songs: [Song] = []
+        var seen = Set<String>()
+        var offset = 0
+
+        while songs.count < targetCount {
+            let json = try await request(
+                "/api/artist/songs",
+                payload: [
+                    "id": artistID,
+                    "private_cloud": true,
+                    "work_type": 1,
+                    "order": "hot",
+                    "offset": offset,
+                    "limit": pageSize,
+                ],
+                crypto: "weapi"
+            )
+            let list = json["songs"] as? [[String: Any]] ?? []
+            guard !list.isEmpty else { break }
+
+            var added = 0
+            for item in list {
+                guard let song = Song(json: item), seen.insert(song.identityKey).inserted else { continue }
+                songs.append(song)
+                added += 1
+                if songs.count >= targetCount { break }
+            }
+
+            // 某些接口异常时会重复返回同一页，避免陷入无限请求。
+            guard added > 0 else { break }
+            offset += list.count
+            if list.count < pageSize { break }
+        }
+        return Array(songs.prefix(targetCount))
     }
 
     /// 歌手专辑

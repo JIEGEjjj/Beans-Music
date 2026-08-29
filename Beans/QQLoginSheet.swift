@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// QQ 音乐登录页：网页登录（默认）/ 手动粘贴 Cookie
-/// 网页登录：应用内 WKWebView 打开 y.qq.com，登录完成后自动读取 Cookie，最稳定。
+/// 网页登录：应用内 WKWebView 打开 y.qq.com，登录完成后由用户手动同步 Cookie。
 struct QQLoginSheet: View {
     @EnvironmentObject private var theme: ThemeStore
     @Environment(\.dismiss) private var dismiss

@@ -29,6 +29,8 @@ struct SongCell: View {
                         .font(BeansFont.appFont(15, isCurrent ? .semibold : .regular))
                         .foregroundStyle(isCurrent ? Color.beansAmber : Color.beansLabel)
                         .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     if song.isVIP {
                         Text("VIP")
                             .font(BeansFont.appFont(9, .bold))
@@ -38,12 +40,16 @@ struct SongCell: View {
                             .background(Capsule().fill(Color(red: 0.93, green: 0.25, blue: 0.22)))
                     }
                 }
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 Text(song.artists.isEmpty ? song.album : song.artists)
                     .font(BeansFont.appFont(12))
                     .foregroundStyle(Color.beansComment)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 8)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 0)
             if isCurrent && player.isPlaying {
                 NowPlayingIndicator()
             } else {
@@ -52,6 +58,7 @@ struct SongCell: View {
                     .foregroundStyle(Color.beansComment)
             }
         }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
         .scaleEffect(isCurrent ? 1.012 : 1)

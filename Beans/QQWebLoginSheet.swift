@@ -11,13 +11,12 @@ struct QQWebLoginPanel: View {
     @State private var pageLoaded = false
     @State private var syncing = false
     @State private var message = ""
-    @State private var timer: Timer?
     let onSuccess: () -> Void
 
     var body: some View {
         let _ = theme.accent
         VStack(spacing: 10) {
-            Text("在下方网页右上角点「登录」，用手机 QQ 扫码或 QQ 号密码登录，完成后自动同步")
+            Text("在下方网页右上角点「登录」，完成后手动点击下方「同步登录状态」")
                 .font(BeansFont.appFont(12))
                 .foregroundStyle(Color.beansComment)
                 .multilineTextAlignment(.center)
@@ -66,22 +65,9 @@ struct QQWebLoginPanel: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 12)
         }
-        .onAppear { startAutoDetect() }
-        .onDisappear { timer?.invalidate(); timer = nil }
     }
 
-    // MARK: - 自动检测 / 手动同步
-
-    private func startAutoDetect() {
-        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
-            readCookies { dict in
-                let auth = QQMusicAuth.shared
-                guard auth.hasValidLogin(dict) else { return }
-                auth.importCookies(dict, nickname: nil)
-                finishSuccess()
-            }
-        }
-    }
+    // MARK: - 手动同步
 
     private func syncNow() {
         syncing = true
@@ -99,8 +85,6 @@ struct QQWebLoginPanel: View {
     }
 
     private func finishSuccess() {
-        timer?.invalidate()
-        timer = nil
         message = "✓ QQ 音乐登录成功"
         BeansHaptics.success()
         ToastCenter.shared.show("QQ 音乐登录成功")

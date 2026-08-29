@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - 歌手主页（点击播放器顶部歌手名跳转：热门歌曲 + 专辑）
 
 struct ArtistHomeSheet: View {
+    @EnvironmentObject private var theme: ThemeStore
     @EnvironmentObject private var player: PlayerManager
     @Environment(\.dismiss) private var dismiss
     let artistName: String
@@ -29,26 +30,30 @@ struct ArtistHomeSheet: View {
 
     var body: some View {
         BeansNavigationStack {
-            Group {
-                if loading {
-                    LoadingStateView()
-                } else if let errorMessage {
-                    ErrorStateView(message: errorMessage) {
-                        Task { await load() }
-                    }
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 14) {
-                            artistHeader
-                            hotSongsSection
-                            if artistSource == .netease {
-                                albumsSection
-                            }
+            ZStack {
+                // 歌手页沿用主页壁纸，不受“同步到全部页面”开关影响。
+                GlassBackdrop(customColor: theme.customBackground, homeMode: true)
+                Group {
+                    if loading {
+                        LoadingStateView()
+                    } else if let errorMessage {
+                        ErrorStateView(message: errorMessage) {
+                            Task { await load() }
                         }
-                        .padding(.top, 6)
-                        .padding(.bottom, 16)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 14) {
+                                artistHeader
+                                hotSongsSection
+                                if artistSource == .netease {
+                                    albumsSection
+                                }
+                            }
+                            .padding(.top, 6)
+                            .padding(.bottom, 16)
+                        }
+                        .beansScrollIndicatorsHidden()
                     }
-                    .beansScrollIndicatorsHidden()
                 }
             }
             .navigationTitle("歌手主页")
@@ -83,6 +88,8 @@ struct ArtistHomeSheet: View {
                     .font(BeansFont.appFont(20, .bold))
                     .foregroundStyle(Color.beansLabel)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 Text(artistSource == .netease
                      ? "热门歌曲 \(hotSongs.count) 首 · 专辑 \(albums.count) 张"
                      : "热门歌曲 \(hotSongs.count) 首")
@@ -155,12 +162,17 @@ struct ArtistHomeSheet: View {
                                         .font(BeansFont.appFont(14, .medium))
                                         .foregroundStyle(Color.beansLabel)
                                         .lineLimit(1)
+                                        .truncationMode(.tail)
+                                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                                     Text(song.album)
                                         .font(BeansFont.appFont(11))
                                         .foregroundStyle(Color.beansComment)
                                         .lineLimit(1)
+                                        .truncationMode(.tail)
+                                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                                 }
-                                Spacer()
+                                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                                Spacer(minLength: 0)
                             }
                             .padding(.vertical, 6)
                             .padding(.horizontal, 16)
@@ -262,8 +274,15 @@ struct ArtistHomeSheet: View {
             let (s, a) = await (songs, albums)
             hotSongs = s
             self.albums = a
-            // 接口异常时兜底：用搜索补全歌手歌曲（避免“暂无”）
-            if hotSongs.isEmpty, let fallback = try? await NetEaseAPI.shared.search(keyword: artistName, limit: 30) {
+            // 接口异常时兜底：分页搜索补全歌手歌曲（避免再次退回 30 首）。
+            if hotSongs.isEmpty {
+                var fallback: [Song] = []
+                for offset in stride(from: 0, to: 120, by: 30) {
+                    let page = (try? await NetEaseAPI.shared.search(keyword: artistName, limit: 30, offset: offset)) ?? []
+                    if page.isEmpty { break }
+                    fallback.append(contentsOf: page)
+                    if page.count < 30 { break }
+                }
                 hotSongs = fallback
             }
             loading = false
@@ -284,7 +303,15 @@ struct ArtistHomeSheet: View {
         }
         var songs = (try? await QQMusicAPI.shared.artistHotSongs(mid: mid, name: artistName)) ?? []
         if songs.isEmpty {
-            songs = (try? await QQMusicAPI.shared.searchSongs(keyword: artistName, limit: 50)) ?? []
+            var fallback: [Song] = []
+            for offset in stride(from: 0, to: 120, by: 30) {
+                let page = (try? await QQMusicAPI.shared.searchSongs(keyword: artistName, limit: 30, offset: offset)) ?? []
+                if page.isEmpty { break }
+                fallback.append(contentsOf: page)
+                if page.count < 30 { break }
+            }
+            var seen = Set<String>()
+            songs = fallback.filter { seen.insert($0.identityKey).inserted }
         }
         hotSongs = songs
         loading = false

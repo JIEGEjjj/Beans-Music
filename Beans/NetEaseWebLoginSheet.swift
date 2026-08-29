@@ -15,12 +15,11 @@ struct NetEaseWebLoginPanel: View {
     @State private var pageLoaded = false
     @State private var syncing = false
     @State private var message = ""
-    @State private var timer: Timer?
 
     var body: some View {
         let _ = theme.accent
         VStack(spacing: 10) {
-            Text("在下方网页中完成网易云登录（支持扫码或手机号），登录成功后自动同步")
+            Text("在下方网页中完成网易云登录，完成后手动点击下方「同步登录状态」")
                 .font(BeansFont.appFont(12))
                 .foregroundStyle(Color.beansComment)
                 .multilineTextAlignment(.center)
@@ -69,21 +68,9 @@ struct NetEaseWebLoginPanel: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 12)
         }
-        .onAppear { startAutoDetect() }
-        .onDisappear { timer?.invalidate(); timer = nil }
     }
 
-    // MARK: - 自动检测 / 手动同步
-
-    private func startAutoDetect() {
-        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { _ in
-            readCookies { dict in
-                guard !(dict["MUSIC_U"] ?? "").isEmpty else { return }
-                NetEaseAPI.shared.importWebCookies(dict)
-                finishSuccess()
-            }
-        }
-    }
+    // MARK: - 手动同步
 
     private func syncNow() {
         syncing = true
@@ -100,8 +87,6 @@ struct NetEaseWebLoginPanel: View {
     }
 
     private func finishSuccess() {
-        timer?.invalidate()
-        timer = nil
         message = "✓ 网易云登录成功，正在同步…"
         BeansHaptics.success()
         ToastCenter.shared.show("网易云登录成功")

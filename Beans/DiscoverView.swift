@@ -43,6 +43,10 @@ struct DiscoverView: View {
     @State private var ranksExpanded = false
     /// 歌单广场展开状态：收起显示前 6，展开显示全部
     @State private var playlistsExpanded = false
+    /// 首页加载去重：SwiftUI 视图刷新时 .task 可能被重复触发，避免网络请求风暴。
+    @State private var activeLoadKey: String?
+    @State private var lastLoadedKey = ""
+    @State private var lastLoadedAt = Date.distantPast
     /// 首次启动免责声明：确认进入后若加载失败自动刷新
     @AppStorage("beans.disclaimerAccepted") private var disclaimerAccepted = false
     /// 网易云歌单广场当前分类（「全部」展示官方精品歌单）
@@ -115,18 +119,15 @@ struct DiscoverView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .beansNeteaseLoginDidUpdate)) { _ in
                 guard platformPrefs.isEnabled(SearchProvider.netease) else { return }
-                homeSourceRaw = SearchProvider.netease.rawValue
-                Task { await load(force: true) }
+                reloadAfterLoginUpdate(.netease)
             }
             .onReceive(NotificationCenter.default.publisher(for: .beansQQLoginDidUpdate)) { _ in
                 guard platformPrefs.isEnabled(SearchProvider.qq) else { return }
-                homeSourceRaw = SearchProvider.qq.rawValue
-                Task { await load(force: true) }
+                reloadAfterLoginUpdate(.qq)
             }
             .onReceive(NotificationCenter.default.publisher(for: .beansKugouLoginDidUpdate)) { _ in
                 guard platformPrefs.isEnabled(SearchProvider.kugou) else { return }
-                homeSourceRaw = SearchProvider.kugou.rawValue
-                Task { await load(force: true) }
+                reloadAfterLoginUpdate(.kugou)
             }
             .sheet(item: $selectedTopList) { topList in
                 TopListDetailView(topList: topList)
@@ -585,12 +586,35 @@ struct DiscoverView: View {
 
     private func load(force: Bool = false) async {
         let cache = DiscoverCache.shared
+        let requestedSource = source
         // 网易云非「全部」分类的歌单不缓存（切换分类即重新拉取）
-        let cacheable = neteaseCat == "全部" || source != .netease
-        if let cached = cache.cached(for: source), !force, cacheable {
+        let requestedCat = neteaseCat
+        let loadKey = "\(requestedSource.rawValue)|\(requestedCat)"
+        if activeLoadKey == loadKey {
+            return
+        }
+        if !force,
+           lastLoadedKey == loadKey,
+           Date().timeIntervalSince(lastLoadedAt) < 20,
+           hasAnyData {
+            loading = false
+            errorMessage = nil
+            return
+        }
+        activeLoadKey = loadKey
+        defer {
+            if activeLoadKey == loadKey {
+                activeLoadKey = nil
+            }
+        }
+        let cacheable = requestedCat == "全部" || requestedSource != .netease
+        if let cached = cache.cached(for: requestedSource), !force, cacheable {
+            guard !Task.isCancelled, requestedSource == source else { return }
             apply(cached)
             loading = false
             errorMessage = nil
+            lastLoadedKey = loadKey
+            lastLoadedAt = Date()
             if cache.isFresh(cached) { return }
             // 缓存过期：先用缓存展示，后台静默刷新
         } else {
@@ -599,18 +623,30 @@ struct DiscoverView: View {
         }
 
         do {
-            let snapshot = try await fetchSnapshot(for: source)
+            let snapshot = try await fetchSnapshot(for: requestedSource, neteaseCat: requestedCat)
+            guard !Task.isCancelled, requestedSource == source else { return }
             apply(snapshot)
             if cacheable, !snapshot.isEmpty {
-                cache.save(snapshot, for: source)
+                cache.save(snapshot, for: requestedSource)
             }
             loading = false
             errorMessage = nil
+            lastLoadedKey = loadKey
+            lastLoadedAt = Date()
         } catch {
+            guard !Task.isCancelled, requestedSource == source else { return }
             loading = false
             if !hasAnyData {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+
+    private func reloadAfterLoginUpdate(_ provider: SearchProvider) {
+        if source == provider {
+            Task { await load(force: true) }
+        } else {
+            homeSourceRaw = provider.rawValue
         }
     }
 
@@ -628,7 +664,7 @@ struct DiscoverView: View {
         }
     }
 
-    private func fetchSnapshot(for source: SearchProvider) async throws -> DiscoverCache.Snapshot {
+    private func fetchSnapshot(for source: SearchProvider, neteaseCat: String) async throws -> DiscoverCache.Snapshot {
         var snapshot = DiscoverCache.Snapshot()
         snapshot.savedAt = Date()
         switch source {

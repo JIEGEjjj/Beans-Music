@@ -15,7 +15,8 @@ struct BeansApp: App {
         _ = CrashReporter.shared
         // 启动时重新注册用户上传的全局字体（覆盖安装后依然生效）
         FontManager.reinstallIfNeeded()
-        // 高刷新率按用户设置启用，默认关闭以降低发热和耗电。
+        // 新安装默认开启高刷新率；老用户保留自己手动关闭的选择。
+        HighRefreshKeeper.registerDefaults()
         HighRefreshKeeper.shared.configureFromDefaults()
     }
 

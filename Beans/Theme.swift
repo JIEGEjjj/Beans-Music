@@ -177,16 +177,50 @@ enum BeansAccent: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - 全局玻璃材质（液态 / 磨砂）
+// MARK: - 全局 UI 风格
 
-enum BeansFXStyle: String, CaseIterable {
-    case liquid
-    case frosted
+enum BeansUIStyle: String, CaseIterable {
+    case liquid = "liquid"
+    case clear = "clear"
+    case compact = "compact"
+    case outline = "outline"
 
     var title: String {
         switch self {
-        case .liquid: return "液态玻璃"
-        case .frosted: return "磨砂玻璃"
+        case .liquid: return "默认液态"
+        case .clear: return "清透磨砂"
+        case .compact: return "紧凑淡雅"
+        case .outline: return "描边高亮"
+        }
+    }
+}
+
+// MARK: - 播放器按钮样式
+
+enum BeansPlayerButtonStyle: String, CaseIterable, Identifiable {
+    case glass
+    case minimal
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .glass: return "经典圆形"
+        case .minimal: return "极简无比"
+        }
+    }
+
+    var previewIcon: String {
+        switch self {
+        case .glass: return "circle"
+        case .minimal: return "minus.circle"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .glass: return "保留原来的圆形玻璃按钮"
+        case .minimal: return "弱化底板，只保留轻量触控反馈"
         }
     }
 }
@@ -208,8 +242,8 @@ final class ThemeStore: ObservableObject {
     @Published var backgroundImagePath: String = ""
     /// 壁纸库：所有已上传壁纸的文件路径
     @Published var wallpaperPaths: [String] = []
-    /// 全局玻璃材质：液态玻璃（iOS 26 Liquid Glass）或磨砂玻璃（ultraThinMaterial）
-    @Published var fxStyle: BeansFXStyle = .liquid
+    /// 全局 UI 风格：影响玻璃容器、卡片透明度与边框质感
+    @Published var uiStyle: BeansUIStyle = .liquid
 
     private let customAccentKey = "beans.accent.custom"
     private let backgroundKey = "beans.background.custom"
@@ -218,7 +252,7 @@ final class ThemeStore: ObservableObject {
     private let wallpaperListKey = "beans.wallpapers.list"
     private let wallpaperDataKey = "beans.wallpapers.data"
     private let deletedKey = "beans.wallpapers.deleted"
-    private let fxStyleKey = "beans.fxStyle"
+    private let uiStyleKey = "beans.uiStyle"
 
     private init() {
         accent = BeansAccent(rawValue: UserDefaults.standard.string(forKey: AccentTheme.key) ?? "") ?? .amber
@@ -228,7 +262,7 @@ final class ThemeStore: ObservableObject {
         backgroundSyncAll = UserDefaults.standard.object(forKey: syncAllKey) as? Bool ?? true
         backgroundImagePath = UserDefaults.standard.string(forKey: backgroundImageKey) ?? ""
         wallpaperPaths = UserDefaults.standard.stringArray(forKey: wallpaperListKey) ?? []
-        fxStyle = BeansFXStyle(rawValue: UserDefaults.standard.string(forKey: fxStyleKey) ?? "") ?? .liquid
+        uiStyle = BeansUIStyle(rawValue: UserDefaults.standard.string(forKey: uiStyleKey) ?? "") ?? .liquid
         // 自动恢复壁纸（覆盖安装/数据迁移后：文件仍在用文件，文件丢失用 base64 备份重建）
         restoreWallpapers()
     }
@@ -313,11 +347,10 @@ final class ThemeStore: ObservableObject {
         UserDefaults.standard.set(backup, forKey: wallpaperDataKey)
     }
 
-    /// 切换全局玻璃材质（液态 / 磨砂）
-    func setFXStyle(_ style: BeansFXStyle) {
-        guard fxStyle != style else { return }
-        fxStyle = style
-        UserDefaults.standard.set(style.rawValue, forKey: fxStyleKey)
+    func setUIStyle(_ style: BeansUIStyle) {
+        guard uiStyle != style else { return }
+        uiStyle = style
+        UserDefaults.standard.set(style.rawValue, forKey: uiStyleKey)
     }
 
     func set(_ newAccent: BeansAccent) {
@@ -365,7 +398,7 @@ final class ThemeStore: ObservableObject {
     var customBackgroundImage: UIImage? {
         if let cached = cachedBackgroundImage { return cached }
         guard !backgroundImagePath.isEmpty else { return nil }
-        let image = UIImage(contentsOfFile: backgroundImagePath)
+        let image = BeansImageFileCache.image(at: backgroundImagePath)
         cachedBackgroundImage = image
         return image
     }
@@ -396,6 +429,7 @@ final class ThemeStore: ObservableObject {
             UserDefaults.standard.set(url.path, forKey: backgroundImageKey)
             saveWallpaperBackup(url.path, data: imageData)
             invalidateBackgroundCache()
+            BeansImageFileCache.remove(url.path)
         } catch {
             // 保存失败：静默保留当前壁纸
         }
@@ -412,6 +446,7 @@ final class ThemeStore: ObservableObject {
     /// 删除壁纸库中的某张壁纸；若正在使用则自动切换到上一张/清空
     func deleteWallpaper(at path: String) {
         try? FileManager.default.removeItem(atPath: path)
+        BeansImageFileCache.remove(path)
         wallpaperPaths.removeAll { $0 == path }
         removeWallpaperBackup(path)
         saveDeletedWallpaper(path)
@@ -428,6 +463,26 @@ final class ThemeStore: ObservableObject {
         backgroundImagePath = ""
         UserDefaults.standard.set("", forKey: backgroundImageKey)
         invalidateBackgroundCache()
+    }
+
+    /// 重置设置时清空整套壁纸库与当前背景。
+    func clearAllWallpapers() {
+        for path in wallpaperPaths {
+            try? FileManager.default.removeItem(atPath: path)
+            BeansImageFileCache.remove(path)
+        }
+        if !backgroundImagePath.isEmpty {
+            try? FileManager.default.removeItem(atPath: backgroundImagePath)
+            BeansImageFileCache.remove(backgroundImagePath)
+        }
+        wallpaperPaths = []
+        backgroundImagePath = ""
+        UserDefaults.standard.removeObject(forKey: wallpaperListKey)
+        UserDefaults.standard.removeObject(forKey: wallpaperDataKey)
+        UserDefaults.standard.removeObject(forKey: deletedKey)
+        UserDefaults.standard.set("", forKey: backgroundImageKey)
+        invalidateBackgroundCache()
+        BeansImageFileCache.removeAll()
     }
 
     private static func wallpaperDirectory() -> URL {

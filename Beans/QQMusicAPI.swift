@@ -157,13 +157,13 @@ final class QQMusicAPI {
     }
 
     /// search_for_qq_cp 搜索 URL（未登录可用；t：0 单曲 / 8 专辑）
-    private func clientSearchURL(keyword: String, limit: Int, type: Int) -> URL? {
+    private func clientSearchURL(keyword: String, limit: Int, type: Int, page: Int = 1) -> URL? {
         var comps = URLComponents(string: searchBase)
         comps?.queryItems = [
             URLQueryItem(name: "format", value: "json"),
             URLQueryItem(name: "w", value: keyword),
             URLQueryItem(name: "n", value: "\(limit)"),
-            URLQueryItem(name: "p", value: "1"),
+            URLQueryItem(name: "p", value: "\(max(page, 1))"),
             URLQueryItem(name: "t", value: "\(type)"),
         ]
         return comps?.url
@@ -172,8 +172,10 @@ final class QQMusicAPI {
     // MARK: - 搜索
 
     /// 搜索歌曲（client_search_cp，本机与手机网络均可）
-    func searchSongs(keyword: String, limit: Int = 30) async throws -> [Song] {
-        guard let url = clientSearchURL(keyword: keyword, limit: limit, type: 0) else {
+    func searchSongs(keyword: String, limit: Int = 30, offset: Int = 0) async throws -> [Song] {
+        let pageSize = max(limit, 1)
+        let page = max(offset, 0) / pageSize + 1
+        guard let url = clientSearchURL(keyword: keyword, limit: pageSize, type: 0, page: page) else {
             throw NetEaseError.unknown("搜索地址无效")
         }
         let json = try await get(url.absoluteString, referer: "https://y.qq.com/portal/player.html")
@@ -931,17 +933,37 @@ final class QQMusicAPI {
         return songs.first?.coverURL
     }
 
-    /// QQ 歌手热门歌曲（fcg_v8_singer_track_cp；mid 为空或接口异常时返回空，由调用方按歌手名搜索兜底）
-    func artistHotSongs(mid: String?, name: String, limit: Int = 50) async throws -> [Song] {
+    /// QQ 歌手热门歌曲（分页加载，避免接口单页最多返回 30 首）
+    func artistHotSongs(mid: String?, name: String, limit: Int = 120) async throws -> [Song] {
         guard let mid, !mid.isEmpty else { return [] }
-        let url = "https://c.y.qq.com/v8/fcg-bin/fcg_v8_singer_track_cp.fcg?singer_mid=\(mid)&order=listen&begin=0&num=\(limit)&format=json"
-        guard let json = try? await get(url) else { return [] }
-        let data = json["data"] as? [String: Any] ?? [:]
-        let list = data["list"] as? [[String: Any]] ?? []
-        return list.compactMap { item -> Song? in
-            guard let music = item["musicData"] as? [String: Any] else { return nil }
-            return song(from: music)
+        let targetCount = max(limit, 1)
+        let pageSize = min(targetCount, 30)
+        var songs: [Song] = []
+        var seen = Set<String>()
+        var begin = 0
+
+        while songs.count < targetCount {
+            let url = "https://c.y.qq.com/v8/fcg-bin/fcg_v8_singer_track_cp.fcg?singer_mid=\(mid)&order=listen&begin=\(begin)&num=\(pageSize)&format=json"
+            guard let json = try? await get(url) else { break }
+            let data = json["data"] as? [String: Any] ?? [:]
+            let list = data["list"] as? [[String: Any]] ?? []
+            guard !list.isEmpty else { break }
+
+            var added = 0
+            for item in list {
+                let raw = (item["musicData"] as? [String: Any]) ?? item
+                guard let parsed = song(from: raw), seen.insert(parsed.identityKey).inserted else { continue }
+                songs.append(parsed)
+                added += 1
+                if songs.count >= targetCount { break }
+            }
+
+            // 某些接口异常时会重复返回同一页，避免陷入无限请求。
+            guard added > 0 else { break }
+            begin += list.count
+            if list.count < pageSize { break }
         }
+        return Array(songs.prefix(targetCount))
     }
 
     /// QQ 歌手专辑（fcg_v8_singer_album；接口异常时返回空）
