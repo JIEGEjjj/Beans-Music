@@ -183,14 +183,12 @@ enum BeansUIStyle: String, CaseIterable {
     case liquid = "liquid"
     case clear = "clear"
     case compact = "compact"
-    case outline = "outline"
 
     var title: String {
         switch self {
         case .liquid: return "默认液态"
-        case .clear: return "清透磨砂"
+        case .clear: return "磨砂玻璃"
         case .compact: return "紧凑淡雅"
-        case .outline: return "描边高亮"
         }
     }
 }
@@ -199,28 +197,81 @@ enum BeansUIStyle: String, CaseIterable {
 
 enum BeansPlayerButtonStyle: String, CaseIterable, Identifiable {
     case glass
-    case minimal
+    case outline
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .glass: return "经典圆形"
-        case .minimal: return "极简无比"
+        case .outline: return "线框图标"
         }
     }
 
     var previewIcon: String {
         switch self {
         case .glass: return "circle"
-        case .minimal: return "minus.circle"
+        case .outline: return "circle.dashed"
         }
     }
 
     var subtitle: String {
         switch self {
         case .glass: return "保留原来的圆形玻璃按钮"
-        case .minimal: return "弱化底板，只保留轻量触控反馈"
+        case .outline: return "细线描边，适合极简布局"
+        }
+    }
+}
+
+// MARK: - 播放器浮尘样式
+
+enum BeansPlayerDustMode: String, CaseIterable, Identifiable {
+    case off
+    case snow
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: return "关闭"
+        case .snow: return "动态浮尘"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .off: return "circle.slash"
+        case .snow: return "sparkles"
+        }
+    }
+}
+
+// MARK: - 播放器封面页样式
+
+enum BeansCoverPlayerStyle: String, CaseIterable, Identifiable {
+    case classic
+    case controlPanel
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .classic: return "经典封面"
+        case .controlPanel: return "控制面板"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .classic: return "封面、歌名和预览歌词分层显示"
+        case .controlPanel: return "封面、歌词和快捷操作聚合成高级面板"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .classic: return "square.stack"
+        case .controlPanel: return "slider.horizontal.3"
         }
     }
 }
@@ -253,6 +304,7 @@ final class ThemeStore: ObservableObject {
     private let wallpaperDataKey = "beans.wallpapers.data"
     private let deletedKey = "beans.wallpapers.deleted"
     private let uiStyleKey = "beans.uiStyle"
+    private var wallpapersRestored = false
 
     private init() {
         accent = BeansAccent(rawValue: UserDefaults.standard.string(forKey: AccentTheme.key) ?? "") ?? .amber
@@ -262,8 +314,14 @@ final class ThemeStore: ObservableObject {
         backgroundSyncAll = UserDefaults.standard.object(forKey: syncAllKey) as? Bool ?? true
         backgroundImagePath = UserDefaults.standard.string(forKey: backgroundImageKey) ?? ""
         wallpaperPaths = UserDefaults.standard.stringArray(forKey: wallpaperListKey) ?? []
-        uiStyle = BeansUIStyle(rawValue: UserDefaults.standard.string(forKey: uiStyleKey) ?? "") ?? .liquid
-        // 自动恢复壁纸（覆盖安装/数据迁移后：文件仍在用文件，文件丢失用 base64 备份重建）
+        let savedUIStyle = UserDefaults.standard.string(forKey: uiStyleKey) ?? ""
+        uiStyle = savedUIStyle == "outline" ? .clear : (BeansUIStyle(rawValue: savedUIStyle) ?? .liquid)
+    }
+
+    /// 在首帧之后恢复壁纸，避免覆盖安装后同步读写大图备份阻塞应用启动。
+    func restoreWallpapersIfNeeded() {
+        guard !wallpapersRestored else { return }
+        wallpapersRestored = true
         restoreWallpapers()
     }
 
@@ -332,6 +390,7 @@ final class ThemeStore: ObservableObject {
 
     /// 配置备份恢复后调用：按 UserDefaults 中的壁纸列表与 base64 备份重建壁纸文件
     func reloadWallpapersFromBackup() {
+        wallpapersRestored = true
         restoreWallpapers()
     }
 

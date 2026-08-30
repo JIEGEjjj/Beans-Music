@@ -56,8 +56,27 @@ final class UnblockSourceStore: ObservableObject {
     static let shared = UnblockSourceStore()
 
     private static let paidAPIURL = "https://source.shiqianjiang.cn/api/music"
-    private static let paidAPIKey = "CERU_KEY-51440644-C9AD-4E10-B593-258FF59CF259"
+    private static let paidAPIKeys = [
+        "CERU_KEY-51440644-C9AD-4E10-B593-258FF59CF259",
+        "CERU_KEY-1C0F7359-2863-46F7-A63C-B0E0E744CDFE",
+        "CERU_KEY-B2495961-F872-4F31-9893-F6E8F15B5D62",
+        "CERU_KEY-51A42014-7122-4D7A-9964-51DEE617FDB5",
+        "CERU_KEY-DCF912D8-1AF2-43E0-B5BE-1AE9ACB628CA",
+        "CERU_KEY-1AAA372F-0436-442B-A893-29F429F23A99",
+        "CERU_KEY-27801580-D346-4ECC-8279-4A6E3DCE2A04",
+        "CERU_KEY-6A7A61FC-69E3-4DA6-8BE7-4CC30C276155",
+        "CERU_KEY-29C420FF-991A-4CDF-8AD7-80052193CC03",
+        "CERU_KEY-E0BF635D-2866-4C35-A053-938636729CF3",
+        "CERU_KEY-AFC06E87-AD81-49BD-9B70-738346B31DF9",
+    ]
     private static let paidURLTemplate = "\(paidAPIURL)/url?source={source}&songId={id}&quality={quality}"
+    private static var paidHeaders: [String: String] {
+        [
+            "apiKey": paidAPIKeys[0],
+            "apiKeys": paidAPIKeys.joined(separator: ","),
+            "quality": "320k",
+        ]
+    }
 
     /// 来自用户提供的三个脚本：LX、CeruMusic CR、CeruMusic QT。
     /// 三个脚本最终调用同一个 API，播放时会按请求指纹去重，避免同一首歌重复请求三次。
@@ -67,7 +86,7 @@ final class UnblockSourceStore: ObservableObject {
             name: "聆澜音源 · LX",
             kind: "paid-lx",
             template: paidURLTemplate,
-            headers: ["apiKey": paidAPIKey, "quality": "320k"],
+            headers: paidHeaders,
             isPreset: true
         ),
         ThirdPartySource(
@@ -75,7 +94,7 @@ final class UnblockSourceStore: ObservableObject {
             name: "聆澜音源 · CR",
             kind: "paid-cr",
             template: paidURLTemplate,
-            headers: ["apiKey": paidAPIKey, "quality": "320k"],
+            headers: paidHeaders,
             isPreset: true
         ),
         ThirdPartySource(
@@ -83,7 +102,7 @@ final class UnblockSourceStore: ObservableObject {
             name: "聆澜音源 · QT",
             kind: "paid-qt",
             template: paidURLTemplate,
-            headers: ["apiKey": paidAPIKey, "quality": "320k"],
+            headers: paidHeaders,
             isPreset: true
         ),
     ]
@@ -109,8 +128,11 @@ final class UnblockSourceStore: ObservableObject {
             savedSources = []
         }
 
-        // 旧版本的导入源和旧版 guoyue 预设不再参与播放，避免导入脚本继续触发网络请求。
-        let existingPresets = savedSources.filter { $0.isPreset }
+        // 只保留当前支持的三个预设，清理旧版本保存的已移除音源。
+        let supportedPresetIDs = Set(Self.paidPresetSources.map(\.id))
+        let existingPresets = savedSources.filter {
+            $0.isPreset && supportedPresetIDs.contains($0.id)
+        }
         presetSources = Self.seedPaidPresets(into: existingPresets)
         defaults.removeObject(forKey: legacyCustomKey)
         defaults.removeObject(forKey: legacyLXKey)

@@ -14,6 +14,9 @@ enum QQSearchType: Int {
 /// - vkey 播放地址经 musicu.fcg 获取，VIP 歌曲返回空；部分数据中心 IP 会被风控返回空，家庭网络正常。
 final class QQMusicAPI {
     static let shared = QQMusicAPI()
+    /// QQ「我的喜欢」不是“创建歌单”列表中的普通歌单，使用稳定占位 ID 进入专用加载流程。
+    static let qqLikedPlaylistID = -201
+    private static let qqLikedCoverURL = URL(string: "https://y.gtimg.cn/mediastyle/global/img/cover_like.png")
 
     private let base = "https://u.y.qq.com/cgi-bin/musicu.fcg"
     private let searchBase = "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp"
@@ -29,31 +32,43 @@ final class QQMusicAPI {
 
     private func get(_ urlString: String, referer: String = "https://y.qq.com/", cookie: String = "") async throws -> [String: Any] {
         guard let url = URL(string: urlString) else { throw NetEaseError.unknown("请求地址无效") }
+        let startedAt = Date()
+        BeansLogger.shared.log("QQ HTTP GET 开始 url=\(Self.sanitizedURL(urlString)) referer=\(referer) cookie=\(Self.cookieSummary(cookie))", level: .debug)
         var request = URLRequest(url: url)
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 QQMusic/9.0.5", forHTTPHeaderField: "User-Agent")
         request.setValue(referer, forHTTPHeaderField: "Referer")
         request.setValue(cookie.isEmpty ? "uin=0; qqmusic_fromtag=66" : cookie, forHTTPHeaderField: "Cookie")
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw NetEaseError.network
+        do {
+            let (data, response) = try await session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            BeansLogger.shared.log("QQ HTTP GET 完成 status=\(status) bytes=\(data.count) elapsed=\(Self.elapsed(startedAt))", level: .debug)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                BeansLogger.shared.log("QQ HTTP GET 非 200 status=\(status) response=\(Self.responseSummary(data))", level: .warn)
+                throw NetEaseError.network
+            }
+            guard let json = parseJSON(data) else {
+                BeansLogger.shared.log("QQ HTTP GET JSON 解析失败 response=\(Self.responseSummary(data))", level: .error)
+                let snippet = String(data: data, encoding: .utf8)?.prefix(120) ?? ""
+                throw NetEaseError.decoding(String(snippet))
+            }
+            BeansLogger.shared.log("QQ HTTP GET JSON 结构 \(Self.jsonSummary(json))", level: .debug)
+            return json
+        } catch {
+            BeansLogger.shared.log("QQ HTTP GET 异常 elapsed=\(Self.elapsed(startedAt)) error=\(error.localizedDescription)", level: .error)
+            throw error
         }
-        guard let json = parseJSON(data) else {
-            let snippet = String(data: data, encoding: .utf8)?.prefix(120) ?? ""
-            throw NetEaseError.decoding(String(snippet))
-        }
-        return json
     }
 
     /// musicu.fcg 统一入口：POST JSON body（与 wp_MusicApi 一致）；登录后附加 QQ Cookie
-    private func musicu(_ payload: [String: Any], cookie: String = "") async throws -> [String: Any] {
+    private func musicu(_ payload: [String: Any], cookie: String = "", timeout: TimeInterval = 6) async throws -> [String: Any] {
         guard let body = try? JSONSerialization.data(withJSONObject: payload),
               let url = URL(string: base) else {
             throw NetEaseError.unknown("请求参数错误")
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        // musicu 偶发挂起/风控，单独限制 6 秒超时，避免搜索卡住 20 秒
-        request.timeoutInterval = 6
+        // musicu 偶发挂起/风控，搜索保持短超时，歌单同步允许更长时间完成回退请求。
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; WOW64; Trident/5.0)", forHTTPHeaderField: "User-Agent")
         request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
@@ -61,15 +76,27 @@ final class QQMusicAPI {
             request.setValue(cookie, forHTTPHeaderField: "Cookie")
         }
         request.httpBody = body
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw NetEaseError.network
+        let startedAt = Date()
+        BeansLogger.shared.log("QQ musicu POST 开始 timeout=\(timeout)s cookie=\(Self.cookieSummary(cookie)) payload=\(Self.jsonSummary(payload))", level: .debug)
+        do {
+            let (data, response) = try await session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            BeansLogger.shared.log("QQ musicu POST 完成 status=\(status) bytes=\(data.count) elapsed=\(Self.elapsed(startedAt))", level: .debug)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                BeansLogger.shared.log("QQ musicu 非 200 status=\(status) response=\(Self.responseSummary(data))", level: .warn)
+                throw NetEaseError.network
+            }
+            guard let json = parseJSON(data) else {
+                BeansLogger.shared.log("QQ musicu JSON 解析失败 response=\(Self.responseSummary(data))", level: .error)
+                let snippet = String(data: data, encoding: .utf8)?.prefix(120) ?? ""
+                throw NetEaseError.decoding(String(snippet))
+            }
+            BeansLogger.shared.log("QQ musicu JSON 结构 \(Self.jsonSummary(json))", level: .debug)
+            return json
+        } catch {
+            BeansLogger.shared.log("QQ musicu 异常 elapsed=\(Self.elapsed(startedAt)) error=\(error.localizedDescription)", level: .error)
+            throw error
         }
-        guard let json = parseJSON(data) else {
-            let snippet = String(data: data, encoding: .utf8)?.prefix(120) ?? ""
-            throw NetEaseError.decoding(String(snippet))
-        }
-        return json
     }
 
     /// 表单 POST（fcg 老接口统一走这里，如 H5 评论接口）
@@ -127,6 +154,8 @@ final class QQMusicAPI {
         value = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
         value = value.replacingOccurrences(of: "\\/", with: "/")
+        value = decodeJSONStringValue(value)
+        if value.hasPrefix("data:image") { return nil }
         if value.hasPrefix("http://") {
             value = "https://" + String(value.dropFirst(7))
         } else if value.hasPrefix("//") {
@@ -137,6 +166,7 @@ final class QQMusicAPI {
             value = "https://y.gtimg.cn/" + value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         }
         return URL(string: value)
+            ?? value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed).flatMap(URL.init(string:))
     }
 
     private func musicuSearchPayload(keyword: String, limit: Int, type: QQSearchType) -> [String: Any] {
@@ -385,20 +415,204 @@ final class QQMusicAPI {
         return code == 0
     }
 
-    /// 我喜欢（红心）歌单歌曲列表（fcg_musiclist_getmyfav dirid=201 拿歌单 id，再拉歌单详情）
+    /// 我喜欢（红心）歌单歌曲列表（dirid=201 解析真实歌单 ID，再拉歌单详情）
     func favoriteSongs(limit: Int = 100) async throws -> [Song] {
         let qqAuth = QQMusicAuth.shared
-        guard qqAuth.isLoggedIn else { return [] }
-        let gtk = qqAuth.gtk
-        let favURL = "https://c.y.qq.com/splcloud/fcgi-bin/fcg_musiclist_getmyfav.fcg?dirid=201&dirinfo=1&g_tk=\(gtk)&format=json&utf8=1"
-        let favJson = try await get(favURL, referer: "https://y.qq.com/n/yqq/playlist", cookie: qqAuth.cookieHeader)
-        let mapid = favJson["map"] as? Int ?? 0
-        guard mapid > 0 else { return [] }
-        let detailURL = "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?type=1&json=1&utf8=1&onlysong=0&new_format=1&disstid=\(mapid)&loginUin=0&hostUin=0&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0"
-        let detailJson = try await get(detailURL, referer: "https://y.qq.com/", cookie: qqAuth.cookieHeader)
-        let cdlist = detailJson["cdlist"] as? [[String: Any]] ?? []
-        let songlist = cdlist.first?["songlist"] as? [[String: Any]] ?? []
-        return songlist.prefix(limit).compactMap { song(from: $0) }
+        let identities = qqAuth.playlistIdentityCandidates.map(Self.maskedIdentity).joined(separator: ",")
+        BeansLogger.shared.log("QQ 我的喜欢加载开始 limit=\(limit) loggedIn=\(qqAuth.isLoggedIn) identities=[\(identities)] playlistUin=\(Self.maskedIdentity(qqAuth.playlistUin)) gtk=已计算", level: .info)
+        guard qqAuth.isLoggedIn else {
+            BeansLogger.shared.log("QQ 我的喜欢终止：当前未登录", level: .error)
+            return []
+        }
+        let cookieCandidates = [qqAuth.playlistCookieHeader, qqAuth.cookieHeader]
+            .filter { !$0.isEmpty }
+            .reduce(into: [String]()) { result, value in
+                if !result.contains(value) { result.append(value) }
+            }
+        let identityCandidates = qqAuth.playlistIdentityCandidates
+
+        // 保留旧版已验证的主路径：201 接口返回真实 map 后，详情请求必须使用
+        // loginUin=0 + 完整 Cookie。部分微信登录态换成 wxuin 或裁剪 Cookie 后会返回空。
+        let legacyFavURL = "https://c.y.qq.com/splcloud/fcgi-bin/fcg_musiclist_getmyfav.fcg?dirid=201&dirinfo=1&g_tk=\(qqAuth.gtk)&format=json&utf8=1"
+        if let favJson = try? await get(legacyFavURL, referer: "https://y.qq.com/n/yqq/playlist", cookie: qqAuth.cookieHeader),
+           let mapid = Self.likedMapID(favJson), mapid > 0 {
+            BeansLogger.shared.log("QQ 我的喜欢旧接口成功 mapid=\(mapid) json=\(Self.jsonSummary(favJson))", level: .info)
+            let detailURL = "https://c.y.qq.com/qzone/fcgi-bin/fcg_ucc_getcdinfo_byids_cp.fcg?type=1&json=1&utf8=1&onlysong=0&new_format=1&disstid=\(mapid)&loginUin=0&hostUin=0&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0"
+            if let detailJson = try? await get(detailURL, referer: "https://y.qq.com/", cookie: qqAuth.cookieHeader),
+               let cdlist = detailJson["cdlist"] as? [[String: Any]],
+               let rawSongs = cdlist.first?["songlist"] as? [[String: Any]] {
+                let songs = rawSongs.prefix(limit).compactMap { song(from: Self.unwrapQQSong($0)) }
+                BeansLogger.shared.log("QQ 我的喜欢旧详情 mapid=\(mapid) cdlist=\(cdlist.count) rawSongs=\(rawSongs.count) parsedSongs=\(songs.count)", level: songs.isEmpty ? .warn : .info)
+                if !songs.isEmpty { return songs }
+            } else {
+                BeansLogger.shared.log("QQ 我的喜欢旧详情未匹配 cdlist/songlist mapid=\(mapid)", level: .warn)
+            }
+        } else {
+            BeansLogger.shared.log("QQ 我的喜欢旧接口未得到有效 mapid", level: .warn)
+        }
+
+        // 官方“我的喜欢”详情接口。它不依赖普通歌单的 disstid，
+        // 而是用 dirid=201 返回专属收藏夹内容。
+        let officialPayload: [String: Any] = [
+            "comm": [
+                "ct": 24,
+                "cv": 0,
+                "uin": qqAuth.playlistUin,
+                "g_tk": qqAuth.gtk,
+                "platform": "yqq",
+            ],
+            "req_1": [
+                "module": "music.srfDissInfo.DissInfo",
+                "method": "CgiGetDiss",
+                "param": [
+                    "new_format": 1,
+                    "disstid": 201,
+                    "dirid": 201,
+                    "song_begin": 0,
+                    "song_num": limit,
+                    "enc_host_uin": qqAuth.playlistUin,
+                    "onlysonglist": 0,
+                    "userinfo": 1,
+                ],
+            ],
+        ]
+        for cookie in cookieCandidates {
+            guard let json = try? await musicu(officialPayload, cookie: cookie, timeout: 20) else { continue }
+            let songs = Self.favoriteSongArray(from: json)
+                .prefix(limit)
+                .compactMap { song(from: Self.unwrapQQSong($0)) }
+            BeansLogger.shared.log("QQ 我的喜欢 CgiGetDiss 解析 raw=\(Self.favoriteSongArray(from: json).count) parsed=\(songs.count)", level: songs.isEmpty ? .warn : .info)
+            if !songs.isEmpty { return songs }
+        }
+
+        // 201 收藏夹接口在不同登录态下有两种返回形式：
+        // 有的直接返回 songlist，有的只返回 map/歌单 ID。必须先消费直接返回的歌曲，
+        // 否则微信登录时会因为拿不到普通歌单 ID 而显示空列表。
+        for identity in identityCandidates {
+            let favURL = "https://c.y.qq.com/splcloud/fcgi-bin/fcg_musiclist_getmyfav.fcg?dirid=201&dirinfo=1&uin=\(identity)&loginUin=\(identity)&hostUin=0&g_tk=\(qqAuth.gtk)&format=json&utf8=1"
+            for cookie in cookieCandidates {
+                guard let favJson = try? await get(favURL, referer: "https://y.qq.com/n/ryqq_v2/profile/create", cookie: cookie) else { continue }
+                let songs = Self.favoriteSongArray(from: favJson)
+                    .prefix(limit)
+                    .compactMap { song(from: ($0["track_info"] as? [String: Any]) ?? $0) }
+                BeansLogger.shared.log("QQ 我的喜欢带身份接口 identity=\(identity) raw=\(Self.favoriteSongArray(from: favJson).count) parsed=\(songs.count)", level: songs.isEmpty ? .warn : .info)
+                if !songs.isEmpty { return songs }
+            }
+        }
+
+        guard let mapid = await likedPlaylistID(qqAuth: qqAuth, cookies: cookieCandidates), mapid > 0 else {
+            BeansLogger.shared.log("QQ 我的喜欢歌单解析失败：未找到真实歌单 ID", level: .error)
+            return []
+        }
+        for cookie in cookieCandidates {
+            let songs = try await playlistSongs(listID: mapid, preferredCookie: cookie, limit: limit)
+            BeansLogger.shared.log("QQ 我的喜欢最终详情 mapid=\(mapid) songs=\(songs.count)", level: songs.isEmpty ? .warn : .info)
+            if !songs.isEmpty { return songs }
+        }
+        let songs = try await playlistSongs(listID: mapid, preferredCookie: nil, limit: limit)
+        BeansLogger.shared.log("QQ 我的喜欢加载结束 mapid=\(mapid) songs=\(songs.count)", level: songs.isEmpty ? .error : .info)
+        return songs
+    }
+
+    /// 解析「我的喜欢」的真实歌单 ID。该歌单通常不会出现在 profile/create 的创建歌单列表中，
+    /// 需要通过 dirid=201 专用接口或 GetUserPlaylist order=3 单独获取。
+    private func likedPlaylistID(qqAuth: QQMusicAuth, cookies: [String]) async -> Int? {
+        let favURL = "https://c.y.qq.com/splcloud/fcgi-bin/fcg_musiclist_getmyfav.fcg?dirid=201&dirinfo=1&g_tk=\(qqAuth.gtk)&format=json&utf8=1"
+        for cookie in cookies {
+            guard let favJson = try? await get(favURL, referer: "https://y.qq.com/n/yqq/playlist", cookie: cookie) else { continue }
+            if let id = Self.likedMapID(favJson), id > 0 { return id }
+
+            let data = favJson["data"] as? [String: Any] ?? favJson
+            if let first = (data["cdlist"] as? [[String: Any]])?.first {
+                let id = Self.integerValue(first["dissid"] ?? first["diss_id"])
+                if id > 0 { return id }
+            }
+        }
+
+        let identities = qqAuth.playlistIdentityCandidates
+        for identity in identities {
+            let numericUin = Int(identity) ?? 0
+            let payload: [String: Any] = [
+                "comm": [
+                    "ct": 24,
+                    "cv": 0,
+                    "uin": numericUin,
+                    "g_tk": qqAuth.gtk,
+                    "platform": "yqq",
+                ],
+                "req_1": [
+                    "module": "music.musichallSong.PlayListDataServer",
+                    "method": "GetUserPlaylist",
+                    "param": [
+                        "uin": numericUin,
+                        "sin": 0,
+                        "size": 100,
+                        "order": 3,
+                    ],
+                ],
+            ]
+            for cookie in cookies {
+                guard let json = try? await musicu(payload, cookie: cookie, timeout: 15) else { continue }
+                for item in Self.playlistArray(from: json) {
+                    let id = Self.integerValue(item["dissid"] ?? item["diss_id"] ?? item["tid"])
+                    if id > 0 { return id }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// fcg_musiclist_getmyfav 的 map 可能是标量、嵌套在 data 中，或是 {"201": 真实歌单 ID}。
+    private static func likedMapID(_ json: [String: Any]) -> Int? {
+        let data = json["data"] as? [String: Any] ?? [:]
+        for value in [json["map"], json["mapid"], json["id"], data["map"], data["mapid"], data["id"]] {
+            if let dict = value as? [String: Any] {
+                let preferredID = integerValue(dict["201"])
+                if preferredID > 0 { return preferredID }
+                if let id = dict.values.lazy.map({ integerValue($0) }).first(where: { $0 > 0 }) { return id }
+            } else {
+                let id = integerValue(value)
+                if id > 0 { return id }
+            }
+        }
+        return nil
+    }
+
+    /// 递归提取 fcg_musiclist_getmyfav 可能返回的 songlist/songList 数组。
+    private static func favoriteSongArray(from json: [String: Any]) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        func walk(_ value: Any) {
+            guard result.isEmpty else { return }
+            if let dict = value as? [String: Any] {
+                for key in ["songlist", "songList", "song_list", "tracks", "tracklist"] {
+                    if let list = dict[key] as? [[String: Any]], !list.isEmpty {
+                        result = list
+                        return
+                    }
+                }
+                for child in dict.values { walk(child) }
+            } else if let array = value as? [Any] {
+                for child in array { walk(child) }
+            }
+        }
+        walk(json)
+        return result
+    }
+
+    /// 收藏接口的曲目有时会包在 songInfo/data/track_info 内，统一解包到歌曲字段层。
+    private static func unwrapQQSong(_ item: [String: Any]) -> [String: Any] {
+        if item["songmid"] != nil || item["mid"] != nil || item["songname"] != nil {
+            return item
+        }
+        for key in ["songInfo", "songinfo", "track_info", "trackInfo", "data", "song"] {
+            if let nested = item[key] as? [String: Any] {
+                let unwrapped = unwrapQQSong(nested)
+                if unwrapped["songmid"] != nil || unwrapped["mid"] != nil || unwrapped["songname"] != nil {
+                    return unwrapped
+                }
+            }
+        }
+        return item
     }
 
     // MARK: - 红心收藏
@@ -797,14 +1011,25 @@ final class QQMusicAPI {
         return Array(songs.prefix(limit))
     }
 
-    /// 用户歌单（创建 + 收藏合并；逆向自 Mineradio：fcg_user_created_diss 拉创建歌单、
-    /// fcg_get_profile_order_asset 拉收藏歌单，合并去重并过滤 QQ 空间背景歌单，喜欢的歌单排最前）
+    /// 用户歌单（创建 + 收藏合并）。
+    /// 微信网页登录可能没有 QQ uin，优先使用带微信 Cookie 的官方 GetUserPlaylist 接口，
+    /// 同时保留旧版 fcg 接口作为 QQ 登录和部分旧账号的快速通道。
     func userPlaylists(uin: String) async throws -> [Playlist] {
         let qqAuth = QQMusicAuth.shared
+        BeansLogger.shared.log("QQ 歌单列表加载开始 requestedUin=\(Self.maskedIdentity(uin)) playlistUin=\(Self.maskedIdentity(qqAuth.playlistUin)) identities=\(qqAuth.playlistIdentityCandidates.map(Self.maskedIdentity).joined(separator: ",")) cookies=\(cookieCandidatesSummary(qqAuth))", level: .info)
         guard qqAuth.isLoggedIn else { return [] }
-        let cookie = qqAuth.cookieHeader
-        let createdURL = "https://c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss?hostUin=0&hostuin=\(uin)&sin=0&size=200&g_tk=5381&loginUin=\(uin)&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0"
-        let collectURL = "https://c.y.qq.com/fav/fcgi-bin/fcg_get_profile_order_asset.fcg?ct=20&cid=205360956&userid=\(uin)&reqtype=3&sin=0&ein=80"
+
+        let requestUin = qqAuth.playlistUin
+        let cookieCandidates = [qqAuth.playlistCookieHeader, qqAuth.cookieHeader]
+            .filter { !$0.isEmpty }
+            .reduce(into: [String]()) { result, value in
+                if !result.contains(value) { result.append(value) }
+            }
+        let legacyUins = (qqAuth.playlistIdentityCandidates + [requestUin, uin])
+            .filter { !$0.isEmpty && $0 != "0" }
+            .reduce(into: [String]()) { result, value in
+                if !result.contains(value) { result.append(value) }
+            }
 
         var playlists: [Playlist] = []
         var seen = Set<Int>()
@@ -817,18 +1042,100 @@ final class QQMusicAPI {
             playlists.append(playlist)
         }
 
-        if let created = try? await get(createdURL, referer: "https://y.qq.com/portal/profile.html", cookie: cookie),
-           let data = created["data"] as? [String: Any],
-           let disslist = data["disslist"] as? [[String: Any]] {
-            disslist.forEach(append)
-        }
-        if let collected = try? await get(collectURL, referer: "https://y.qq.com/portal/profile.html", cookie: cookie),
-           let data = collected["data"] as? [String: Any],
-           let cdlist = data["cdlist"] as? [[String: Any]] {
-            cdlist.forEach(append)
+        var createdLoaded = false
+        var collectedLoaded = false
+
+        // QQ/微信登录都尝试旧接口；部分微信态账号必须显式带 wxuin 才会返回歌单。
+        for legacyUin in legacyUins {
+            let createdURL = "https://c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss?hostUin=0&hostuin=\(legacyUin)&sin=0&size=200&g_tk=\(qqAuth.gtk)&loginUin=\(legacyUin)&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0"
+            for cookie in cookieCandidates {
+                guard let created = try? await get(createdURL, referer: "https://y.qq.com/portal/profile.html", cookie: cookie) else { continue }
+                let data = created["data"] as? [String: Any] ?? created
+                let disslist = (data["disslist"] as? [[String: Any]]) ?? (created["disslist"] as? [[String: Any]]) ?? []
+                if !disslist.isEmpty {
+                    createdLoaded = true
+                    disslist.forEach(append)
+                    break
+                }
+            }
+            if createdLoaded { break }
         }
 
-        // 喜欢的歌单（我喜欢 / 我的喜欢 / 喜欢的音乐）排最前
+        for legacyUin in legacyUins {
+            let collectURL = "https://c.y.qq.com/fav/fcgi-bin/fcg_get_profile_order_asset.fcg?ct=20&cid=205360956&userid=\(legacyUin)&reqtype=3&sin=0&ein=80&g_tk=\(qqAuth.gtk)"
+            for cookie in cookieCandidates {
+                guard let collected = try? await get(collectURL, referer: "https://y.qq.com/portal/profile.html", cookie: cookie) else { continue }
+                let data = collected["data"] as? [String: Any] ?? collected
+                let cdlist = (data["cdlist"] as? [[String: Any]]) ?? (collected["cdlist"] as? [[String: Any]]) ?? []
+                if !cdlist.isEmpty {
+                    collectedLoaded = true
+                    cdlist.forEach(append)
+                    break
+                }
+            }
+            if collectedLoaded { break }
+        }
+
+        // 官方 App 接口按多个身份候选依次尝试，兼容 QQ 登录和微信网页登录。
+        // order：1=创建，2=收藏，3=我喜欢。空响应仍继续尝试下一个身份参数。
+        let officialUins = (qqAuth.playlistIdentityCandidates + [requestUin, "0"]).reduce(into: [String]()) { result, value in
+            if !result.contains(value) { result.append(value) }
+        }
+        for (order, loaded) in [(1, createdLoaded), (2, collectedLoaded), (3, false)] {
+            if loaded { continue }
+            for officialUin in officialUins {
+                let numericUin = Int(officialUin) ?? 0
+                let payload: [String: Any] = [
+                    "comm": [
+                        "ct": 24,
+                        "cv": 0,
+                        "uin": numericUin,
+                        "g_tk": qqAuth.gtk,
+                        "platform": "yqq",
+                    ],
+                    "req_1": [
+                        "module": "music.musichallSong.PlayListDataServer",
+                        "method": "GetUserPlaylist",
+                        "param": [
+                            "uin": numericUin,
+                            "sin": 0,
+                            "size": 200,
+                            "order": order,
+                        ],
+                    ],
+                ]
+                for cookie in cookieCandidates {
+                    guard let json = try? await musicu(payload, cookie: cookie, timeout: 15) else { continue }
+                    let list = Self.playlistArray(from: json)
+                    if !list.isEmpty {
+                        list.forEach(append)
+                        break
+                    }
+                }
+                if !playlists.isEmpty && order != 3 { break }
+            }
+        }
+
+        if playlists.isEmpty {
+            BeansLogger.shared.log("QQ 歌单列表为空（uin=\(uin)，playlistUin=\(requestUin)），可能是微信 Cookie 未包含完整登录态或接口返回空", level: .error)
+        }
+
+        // QQ 网页的 profile/create 只展示创建歌单，“我的喜欢”由 dirid=201 单独维护。
+        // 即使各歌单列表接口没有把它返回，也要显式放回音乐库列表。
+        if !seen.contains(Self.qqLikedPlaylistID) &&
+           !playlists.contains(where: { $0.name == "我的喜欢" }) {
+            playlists.insert(
+                Playlist(
+                    id: Self.qqLikedPlaylistID,
+                    name: "我的喜欢",
+                    coverURL: Self.qqLikedCoverURL,
+                    source: .qq
+                ),
+                at: 0
+            )
+        }
+        BeansLogger.shared.log("QQ 歌单列表加载结束 count=\(playlists.count) likedPresent=\(playlists.contains { $0.id == Self.qqLikedPlaylistID }) names=\(playlists.map(\.name).joined(separator: " | "))", level: playlists.isEmpty ? .error : .info)
+
         playlists.sort { lhs, rhs in
             let a = lhs.name.contains("我喜欢") || lhs.name.contains("我的喜欢") || lhs.name.contains("喜欢的音乐")
             let b = rhs.name.contains("我喜欢") || rhs.name.contains("我的喜欢") || rhs.name.contains("喜欢的音乐")
@@ -838,40 +1145,256 @@ final class QQMusicAPI {
         return playlists
     }
 
-    /// QQ 歌单项解析（字段对齐 Mineradio：dissid/tid/dirid/id/diss_id + diss_name/name/title…）
+    /// QQ 歌单项解析，兼容旧 fcg 和 musicu GetUserPlaylist 的字段命名。
     private static func playlist(fromQQDiss item: [String: Any]) -> Playlist? {
-        let id = item["dissid"] as? Int
-            ?? (item["tid"] as? Int)
-            ?? (item["dirid"] as? Int)
-            ?? (item["id"] as? Int)
-            ?? Int(item["dissid"] as? String ?? "")
-            ?? Int(item["dirid"] as? String ?? "")
-        guard let id, id > 0 else { return nil }
-        let name = item["diss_name"] as? String ?? (item["name"] as? String ?? item["title"] as? String ?? "")
-        guard !name.isEmpty else { return nil }
+        let rawName = item["diss_name"] as? String
+            ?? (item["dissname"] as? String
+                ?? (item["name"] as? String ?? (item["title"] as? String ?? "")))
+        let dirid = integerValue(item["dirid"])
+        let dissid = integerValue(item["dissid"] ?? item["diss_id"])
+        let tid = integerValue(item["tid"])
+
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if dirid == 201 || trimmedName == "我喜欢" || trimmedName == "我的喜欢" || trimmedName == "喜欢的音乐" {
+            return Playlist(
+                id: Self.qqLikedPlaylistID,
+                name: "我的喜欢",
+                coverURL: URL(string: "https://y.gtimg.cn/mediastyle/global/img/cover_like.png"),
+                trackCount: integerValue(item["song_cnt"] ?? item["songnum"] ?? item["total_song_num"]),
+                source: .qq
+            )
+        }
+
+        // 目录项没有真实歌单 ID，不能展示成可打开但永远为空的歌单。
+        if dissid == 0 && tid == 0 && dirid > 0 { return nil }
+        let id = dissid > 0 ? dissid : (tid > 0 ? tid : (dirid > 0 ? dirid : integerValue(item["id"])))
+        guard id > 0, !trimmedName.isEmpty else { return nil }
+
         let coverURL = [
-            "diss_cover",
-            "dir_pic_url",
-            "logo",
-            "picurl",
-            "pic_url",
-            "cover",
-            "cover_url",
-            "headurl",
-            "imgurl",
+            "diss_cover", "dir_pic_url", "logo", "picurl", "pic_url",
+            "cover", "cover_url", "headurl", "imgurl",
         ].lazy.compactMap { normalizedQQImageURL(item[$0]) }.first
-        let count = item["song_cnt"] as? Int
-            ?? (item["songnum"] as? Int)
-            ?? (item["total_song_num"] as? Int)
-            ?? (item["song_count"] as? Int)
-            ?? Int(item["song_cnt"] as? String ?? "")
-            ?? Int(item["songnum"] as? String ?? "")
-            ?? 0
-        return Playlist(id: id, name: name, coverURL: coverURL, trackCount: count, source: .qq)
+        let count = integerValue(item["song_cnt"] ?? item["songnum"] ?? item["total_song_num"] ?? item["song_count"])
+        return Playlist(id: id, name: trimmedName, coverURL: coverURL, trackCount: count, source: .qq)
     }
 
-    /// QQ 推荐歌单
-    func recommendPlaylists(limit: Int = 12) async throws -> [Playlist] {
+    private static func integerValue(_ value: Any?) -> Int {
+        if let value = value as? Int { return value }
+        if let value = value as? NSNumber { return value.intValue }
+        if let value = value as? Double { return Int(value) }
+        if let value = value as? String { return Int(value) ?? 0 }
+        return 0
+    }
+
+    private static func decodeJSONStringValue(_ value: String) -> String {
+        let quoted = "\"\(value)\""
+        guard let data = quoted.data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(with: data) as? String else {
+            return value
+        }
+        return decoded
+    }
+
+    private static func initialData(from html: String) -> [String: Any]? {
+        guard let marker = html.range(of: "window.__INITIAL_DATA__") ?? html.range(of: "__INITIAL_DATA__"),
+              let start = html[marker.upperBound...].firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var index = start
+        while index < html.endIndex {
+            let ch = html[index]
+            if escaped {
+                escaped = false
+            } else if ch == "\\" {
+                escaped = inString
+            } else if ch == "\"" {
+                inString.toggle()
+            } else if !inString {
+                if ch == "{" {
+                    depth += 1
+                } else if ch == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        let jsonText = String(html[start...index])
+                        return try? JSONSerialization.jsonObject(with: Data(jsonText.utf8)) as? [String: Any]
+                    }
+                }
+            }
+            index = html.index(after: index)
+        }
+        return nil
+    }
+
+    private static func hotRecommendArray(from json: [String: Any]) -> [[String: Any]] {
+        if let list = json["hotRecommend"] as? [[String: Any]], !list.isEmpty { return list }
+        var result: [[String: Any]] = []
+        func walk(_ value: Any) {
+            guard result.isEmpty else { return }
+            if let dict = value as? [String: Any] {
+                for (key, child) in dict {
+                    if key == "hotRecommend", let list = child as? [[String: Any]], !list.isEmpty {
+                        result = list
+                        return
+                    }
+                    walk(child)
+                }
+            } else if let array = value as? [Any] {
+                array.forEach(walk)
+            }
+        }
+        walk(json)
+        return result
+    }
+
+    private static func hotRecommendPlaylist(_ item: [String: Any]) -> Playlist? {
+        let id = integerValue(item["dissid"] ?? item["diss_id"] ?? item["tid"] ?? item["id"])
+        let name = (item["dissname"] as? String) ?? (item["title"] as? String) ?? (item["name"] as? String) ?? ""
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard id > 0, !trimmedName.isEmpty else { return nil }
+        let cover = normalizedQQImageURL(item["imgurl"] ?? item["picurl"] ?? item["pic_url"] ?? item["cover"])
+        let count = integerValue(item["listennum"] ?? item["songnum"] ?? item["song_cnt"] ?? item["listen_num"])
+        return Playlist(id: id, name: trimmedName, coverURL: cover, trackCount: count, source: .qq)
+    }
+
+    /// 兼容 GetUserPlaylist 在不同客户端版本中的嵌套位置。
+    private static func playlistArray(from json: [String: Any]) -> [[String: Any]] {
+        let paths = [
+            ["req_1", "data", "v_playlist"],
+            ["req_1", "data", "playlist"],
+            ["req_1", "data", "list"],
+            ["req_1", "data", "data", "v_playlist"],
+            ["req_1", "data", "body", "v_playlist"],
+        ]
+        for path in paths {
+            var current: Any = json
+            for key in path {
+                guard let dict = current as? [String: Any], let next = dict[key] else {
+                    current = NSNull()
+                    break
+                }
+                current = next
+            }
+            if let list = current as? [[String: Any]], !list.isEmpty {
+                return list
+            }
+        }
+
+        var result: [[String: Any]] = []
+        func walk(_ value: Any) {
+            guard result.isEmpty else { return }
+            if let dict = value as? [String: Any] {
+                for (key, child) in dict {
+                    if key == "v_playlist", let list = child as? [[String: Any]], !list.isEmpty {
+                        result = list
+                        return
+                    }
+                    walk(child)
+                }
+            } else if let array = value as? [Any] {
+                array.forEach(walk)
+            }
+        }
+        walk(json)
+        return result
+    }
+
+    /// QQ 官网首页热门歌单。
+    /// 官网首页会把这组数据放在 SSR 的 __INITIAL_DATA__.hotRecommend 中，
+    /// 比旧的 RecommendPlaylist musicu 接口更接近官网实际展示内容。
+    func hotPlaylists(limit: Int = 18) async throws -> [Playlist] {
+        guard let url = URL(string: "https://y.qq.com/") else {
+            throw NetEaseError.unknown("QQ 音乐官网地址无效")
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 QQMusic/9.0.5", forHTTPHeaderField: "User-Agent")
+        request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
+        let startedAt = Date()
+        BeansLogger.shared.log("QQ 官网热门歌单加载开始 limit=\(limit)", level: .info)
+        let (data, response) = try await session.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard status == 200, let html = String(data: data, encoding: .utf8) else {
+            BeansLogger.shared.log("QQ 官网热门歌单加载失败 status=\(status) bytes=\(data.count)", level: .error)
+            throw NetEaseError.network
+        }
+
+        if let initialData = Self.initialData(from: html) {
+            var seen = Set<Int>()
+            let playlists = Self.hotRecommendArray(from: initialData)
+                .compactMap(Self.hotRecommendPlaylist)
+                .filter { playlist in
+                    guard !seen.contains(playlist.id) else { return false }
+                    seen.insert(playlist.id)
+                    return true
+                }
+                .prefix(max(1, limit))
+            if !playlists.isEmpty {
+                BeansLogger.shared.log("QQ 官网热门歌单 SSR 解析完成 count=\(playlists.count) elapsed=\(Self.elapsed(startedAt))", level: .info)
+                return await enrichHotPlaylistCovers(Array(playlists))
+            }
+            BeansLogger.shared.log("QQ 官网热门歌单 SSR 存在但 hotRecommend 为空，尝试正则兜底", level: .warn)
+        } else {
+            BeansLogger.shared.log("QQ 官网热门歌单未找到 INITIAL_DATA，尝试正则兜底", level: .warn)
+        }
+
+        let pattern = #""imgurl"\s*:\s*"([^"]+)".*?"dissname"\s*:\s*"([^"]*)".*?"listennum"\s*:\s*([0-9]+).*?"dissid"\s*:\s*([0-9]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+            throw NetEaseError.decoding("QQ 官网热门歌单解析器初始化失败")
+        }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        var playlists: [Playlist] = []
+        var seen = Set<Int>()
+        for match in regex.matches(in: html, range: range) {
+            guard match.numberOfRanges == 5,
+                  let imageRange = Range(match.range(at: 1), in: html),
+                  let nameRange = Range(match.range(at: 2), in: html),
+                  let countRange = Range(match.range(at: 3), in: html),
+                  let idRange = Range(match.range(at: 4), in: html),
+                  let id = Int(html[idRange]),
+                  !seen.contains(id) else { continue }
+            let image = Self.decodeJSONStringValue(String(html[imageRange]))
+            let name = Self.decodeJSONStringValue(String(html[nameRange]))
+            let count = Int(html[countRange]) ?? 0
+            guard !name.isEmpty else { continue }
+            seen.insert(id)
+            playlists.append(Playlist(id: id, name: name, coverURL: Self.normalizedQQImageURL(image), trackCount: count, source: .qq))
+            if playlists.count >= max(1, limit) { break }
+        }
+        BeansLogger.shared.log("QQ 官网热门歌单加载完成 count=\(playlists.count) elapsed=\(Self.elapsed(startedAt))", level: playlists.isEmpty ? .warn : .info)
+        if !playlists.isEmpty { return await enrichHotPlaylistCovers(playlists) }
+        return try await recommendPlaylistsFallback(limit: limit)
+    }
+
+    /// 官网 SSR 为了懒加载通常只返回占位 data URI，使用歌单详情接口一次性补齐真实 logo。
+    private func enrichHotPlaylistCovers(_ playlists: [Playlist]) async -> [Playlist] {
+        let ids = playlists.map(\.id).map(String.init).joined(separator: ",")
+        guard !ids.isEmpty else { return playlists }
+        let url = "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?type=1&json=1&utf8=1&onlysong=0&new_format=1&disstid=\(ids)&loginUin=0&hostUin=0&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0"
+        guard let json = try? await get(url, referer: "https://y.qq.com/") else {
+            BeansLogger.shared.log("QQ 热门歌单封面补全请求失败，保留 SSR 封面", level: .warn)
+            return playlists
+        }
+        let cdlist = json["cdlist"] as? [[String: Any]] ?? []
+        var covers: [Int: URL] = [:]
+        for item in cdlist {
+            let id = Self.integerValue(item["disstid"] ?? item["dissid"])
+            if let cover = Self.normalizedQQImageURL(item["logo"]) ?? Self.normalizedQQImageURL(item["coveradurl"]) {
+                covers[id] = cover
+            }
+        }
+        let result = playlists.map { playlist -> Playlist in
+            var updated = playlist
+            if let cover = covers[playlist.id] {
+                updated.coverURL = cover
+            }
+            return updated
+        }
+        BeansLogger.shared.log("QQ 热门歌单封面补全完成 requested=\(playlists.count) resolved=\(covers.count)", level: .info)
+        return result
+    }
+
+    /// QQ 推荐歌单 musicu 兜底接口
+    private func recommendPlaylistsFallback(limit: Int = 12) async throws -> [Playlist] {
         let payload: [String: Any] = [
             "comm": ["ct": 24, "cv": 0],
             "req_1": [
@@ -895,36 +1418,58 @@ final class QQMusicAPI {
 
     /// QQ 歌单内歌曲（主通道 fcg_ucc_getcdinfo_byids_cp，Mineradio 逆向；兜底 musicu GetPlaylistDetail）
     func playlistSongs(listID: Int) async throws -> [Song] {
+        try await playlistSongs(listID: listID, preferredCookie: nil, limit: 100)
+    }
+
+    private func playlistSongs(listID: Int, preferredCookie: String?, limit: Int) async throws -> [Song] {
+        BeansLogger.shared.log("QQ 歌单歌曲加载开始 listID=\(listID) limit=\(limit) preferredCookie=\(preferredCookie == nil ? "无" : "有")", level: .info)
+        if listID == Self.qqLikedPlaylistID {
+            return try await favoriteSongs(limit: limit)
+        }
         let qqAuth = QQMusicAuth.shared
-        let cookie = qqAuth.isLoggedIn ? qqAuth.cookieHeader : ""
-        let loginUin = qqAuth.isLoggedIn ? qqAuth.uin : "0"
-        let detailURL = "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?type=1&json=1&utf8=1&onlysong=0&new_format=1&disstid=\(listID)&loginUin=\(loginUin)&hostUin=0&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0"
-        if let detailJson = try? await get(detailURL, referer: "https://y.qq.com/n/yqq/playlist", cookie: cookie),
-           let cdlist = detailJson["cdlist"] as? [[String: Any]],
-           let songlist = cdlist.first?["songlist"] as? [[String: Any]],
-           !songlist.isEmpty {
-            let songs = songlist.compactMap { item -> Song? in
-                // 部分接口返回会把歌曲包在 track_info 里，先解包再走统一解析
+        let cookie = preferredCookie ?? (qqAuth.isLoggedIn ? qqAuth.playlistCookieHeader : "")
+        let loginUins = (qqAuth.isLoggedIn ? qqAuth.playlistIdentityCandidates : ["0"])
+            .reduce(into: [String]()) { result, value in
+                if !result.contains(value) { result.append(value) }
+            }
+        for loginUin in loginUins {
+            let detailURL = "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?type=1&json=1&utf8=1&onlysong=0&new_format=1&disstid=\(listID)&loginUin=\(loginUin)&hostUin=0&format=json&inCharset=utf8&outCharset=utf-8&notice=0&platform=yqq.json&needNewCode=0"
+            if let detailJson = try? await get(detailURL, referer: "https://y.qq.com/n/yqq/playlist", cookie: cookie),
+               let cdlist = detailJson["cdlist"] as? [[String: Any]],
+               let songlist = cdlist.first?["songlist"] as? [[String: Any]],
+               !songlist.isEmpty {
+                let songs = songlist.prefix(limit).compactMap { item -> Song? in
+                    // 部分接口返回会把歌曲包在 track_info 里，先解包再走统一解析
+                    let raw = (item["track_info"] as? [String: Any]) ?? item
+                    return song(from: raw)
+                }
+                if !songs.isEmpty { return songs }
+            }
+        }
+        // 兜底：musicu GetPlaylistDetail
+        for loginUin in loginUins {
+            let payload: [String: Any] = [
+                "comm": ["ct": 24, "cv": 0, "uin": Int(loginUin) ?? 0, "g_tk": qqAuth.gtk, "platform": "yqq"],
+                "req_1": [
+                    "module": "music.playlist.PlayListDataServer",
+                    "method": "GetPlaylistDetail",
+                    "param": ["id": listID, "uin": Int(loginUin) ?? 0, "song_begin": 0, "song_num": limit]
+                ]
+            ]
+            guard let json = try? await musicu(payload, cookie: cookie) else { continue }
+            let list = nestedArray(json, path: ["req_1", "data", "songlist"])
+            let songs = list.prefix(limit).compactMap { item -> Song? in
                 let raw = (item["track_info"] as? [String: Any]) ?? item
                 return song(from: raw)
             }
             if !songs.isEmpty { return songs }
         }
-        // 兜底：musicu GetPlaylistDetail
-        let payload: [String: Any] = [
-            "comm": ["ct": 24, "cv": 0],
-            "req_1": [
-                "module": "music.playlist.PlayListDataServer",
-                "method": "GetPlaylistDetail",
-                "param": ["id": listID, "uin": 0, "song_begin": 0, "song_num": 100]
-            ]
-        ]
-        let json = try await musicu(payload)
-        let list = nestedArray(json, path: ["req_1", "data", "songlist"])
-        return list.compactMap { item -> Song? in
-            let raw = (item["track_info"] as? [String: Any]) ?? item
-            return song(from: raw)
-        }
+        return []
+    }
+
+    private func cookieCandidatesSummary(_ auth: QQMusicAuth) -> String {
+        let values = [auth.playlistCookieHeader, auth.cookieHeader].filter { !$0.isEmpty }
+        return values.enumerated().map { "#\($0.offset):\(Self.cookieSummary($0.element))" }.joined(separator: " ")
     }
 
     /// 歌单第一首歌曲封面（歌单封面缺失时的兜底；失败返回 nil）
@@ -1022,6 +1567,66 @@ final class QQMusicAPI {
     }
 
     // MARK: - 工具
+
+    private static func maskedIdentity(_ value: String) -> String {
+        guard value.count > 4 else { return value.isEmpty ? "空" : "***" }
+        return "\(value.prefix(2))***\(value.suffix(2))"
+    }
+
+    private static func elapsed(_ start: Date) -> String {
+        String(format: "%.3fs", Date().timeIntervalSince(start))
+    }
+
+    private static func cookieSummary(_ cookie: String) -> String {
+        let names = cookie.split(separator: ";").compactMap { part -> String? in
+            let name = part.split(separator: "=", maxSplits: 1).first.map(String.init) ?? ""
+            return name.isEmpty ? nil : name
+        }
+        return "keys=[\(names.joined(separator: ","))] count=\(names.count)"
+    }
+
+    private static func responseSummary(_ data: Data) -> String {
+        let text = String(data: data, encoding: .utf8) ?? ""
+        let compact = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return "text=\(String(compact.prefix(300)))"
+    }
+
+    private static func jsonSummary(_ value: [String: Any]) -> String {
+        var lines: [String] = []
+        func describe(_ value: Any, path: String, depth: Int) {
+            guard lines.count < 160 else { return }
+            if let dict = value as? [String: Any] {
+                let keys = dict.keys.sorted()
+                let codes = ["code", "ret", "result", "message", "msg"].compactMap { key -> String? in
+                    guard let item = dict[key] else { return nil }
+                    return "\(key)=\(String(describing: item).prefix(80))"
+                }
+                lines.append("\(path): dict keys=[\(keys.joined(separator: ","))] \(codes.joined(separator: " "))")
+                guard depth < 4 else { return }
+                for key in keys {
+                    if let child = dict[key] { describe(child, path: "\(path).\(key)", depth: depth + 1) }
+                }
+            } else if let array = value as? [Any] {
+                lines.append("\(path): array count=\(array.count)")
+                guard depth < 4 else { return }
+                if let first = array.first { describe(first, path: "\(path)[0]", depth: depth + 1) }
+            } else {
+                lines.append("\(path): \(String(describing: value).prefix(120))")
+            }
+        }
+        describe(value, path: "$", depth: 0)
+        return lines.joined(separator: " | ")
+    }
+
+    private static func sanitizedURL(_ value: String) -> String {
+        guard var components = URLComponents(string: value), var items = components.queryItems else { return value }
+        let privateKeys = Set(["uin", "loginUin", "userid", "hostUin", "g_tk", "g_tk_new"])
+        items = items.map { item in
+            privateKeys.contains(item.name) ? URLQueryItem(name: item.name, value: "<redacted>") : item
+        }
+        components.queryItems = items
+        return components.string ?? value
+    }
 
     private func nestedArray(_ json: [String: Any], path: [String]) -> [[String: Any]] {
         var current: Any = json

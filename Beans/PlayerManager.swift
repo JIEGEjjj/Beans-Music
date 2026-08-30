@@ -63,7 +63,12 @@ final class PlayerManager: NSObject, ObservableObject {
     var duration: Double = 0 {
         didSet { clock.update(duration: duration) }
     }
-    @Published var playMode: PlayMode = .sequential
+    @Published var playMode: PlayMode = .sequential {
+        didSet {
+            guard oldValue != playMode else { return }
+            defaults.set(playMode.rawValue, forKey: playModeKey)
+        }
+    }
     @Published var rate: Double = 1.0
     @Published var sleepTimerEndsAt: Date?
     @Published var sleepTimerRemaining: Int = 0
@@ -79,18 +84,25 @@ final class PlayerManager: NSObject, ObservableObject {
     private var playbackConfirmed = false
     private var pendingThirdPartyVIPNotice: ThirdPartyVIPNotice?
     private var sessionConfigured = false
+    private var systemPlaybackPrepared = false
+    private var routeObserverInstalled = false
+    private var interruptionObserverInstalled = false
+    private var remoteCommandsInstalled = false
     private var playOrder: [Int] = []
     private var orderPosition = 0
     private var sleepTimer: Timer?
     private var lastCountedSongID: String?
     private var wasPlayingBeforeInterruption = false
     private var lastPublishedProgress: Double = -1
+    private var lastPersistedProgress: Double = -1
     private var lastNowPlayingArtworkKey: String?
     private static let nowPlayingArtworkCache = NSCache<NSURL, UIImage>()
 
     private let historyKey = "beans.history"
     private let countsKey = "beans.playcounts"
+    private let playbackStateKey = "beans.player.playbackState.v1"
     private let audioMixKey = "beans.audio.mixothers.v1"
+    private let playModeKey = "beans.player.playMode"
     private let thirdPartyVIPNoticeKey = "beans.showThirdPartyVIPNotice"
     private let defaults = UserDefaults.standard
 
@@ -99,17 +111,38 @@ final class PlayerManager: NSObject, ObservableObject {
         let message: String
     }
 
+    private struct PersistedPlaybackState: Codable {
+        let queue: [Song]
+        let currentIndex: Int
+        let progress: Double
+        let duration: Double
+        let savedAt: Date
+    }
+
     var currentSong: Song? {
         queue.indices.contains(currentIndex) ? queue[currentIndex] : nil
     }
 
     override init() {
         super.init()
+        if let raw = defaults.string(forKey: playModeKey),
+           let saved = PlayMode(rawValue: raw) {
+            playMode = saved
+        }
         loadHistory()
         loadPlayCounts()
-        observeInterruptions()
-        observeRouteChanges()
-        setupRemoteCommands()
+        restorePersistedPlaybackState()
+    }
+
+    /// 在首帧之后恢复轻量播放偏好，避免安装后启动阶段触碰系统媒体服务。
+    func restorePersistedPlayMode() {
+        guard let raw = defaults.string(forKey: playModeKey),
+              let saved = PlayMode(rawValue: raw) else { return }
+        guard playMode != saved else { return }
+        playMode = saved
+        if !queue.isEmpty {
+            buildPlayOrder()
+        }
     }
 
     // MARK: - 播放控制
@@ -125,7 +158,7 @@ final class PlayerManager: NSObject, ObservableObject {
         play(songs: context, startAt: context.firstIndex(of: song) ?? 0)
     }
 
-    /// 插队播放：把歌曲放到当前歌曲之后并立即播放
+    /// 插队播放：把歌曲放到当前歌曲之后，不打断当前播放
     func playNext(_ song: Song) {
         guard !queue.isEmpty else {
             play(songs: [song], startAt: 0)
@@ -134,11 +167,15 @@ final class PlayerManager: NSObject, ObservableObject {
         let insertAt = currentIndex + 1
         queue.insert(song, at: min(insertAt, queue.count))
         buildPlayOrder()
-        jumpToOrderPosition(min(insertAt, queue.count - 1))
+        savePersistedPlaybackState()
     }
 
     func togglePlayPause() {
-        guard let player else { return }
+        guard let player else {
+            guard currentSong != nil else { return }
+            loadCurrent(resumeAt: progress)
+            return
+        }
         if player.timeControlStatus == .playing {
             player.pause()
             isPlaying = false
@@ -146,6 +183,7 @@ final class PlayerManager: NSObject, ObservableObject {
             player.playImmediately(atRate: Float(rate))
             isPlaying = true
         }
+        savePersistedPlaybackState()
         updateNowPlaying()
     }
 
@@ -187,6 +225,7 @@ final class PlayerManager: NSObject, ObservableObject {
             }
         }
         updateNowPlaying()
+        savePersistedPlaybackState()
     }
 
     func seekBy(_ delta: Double) {
@@ -226,6 +265,7 @@ final class PlayerManager: NSObject, ObservableObject {
             loadCurrent()
         }
         buildPlayOrder(avoiding: removedID)
+        savePersistedPlaybackState()
     }
 
     func retryCurrent() {
@@ -261,6 +301,7 @@ final class PlayerManager: NSObject, ObservableObject {
             currentIndex = 0
         }
         buildPlayOrder()
+        savePersistedPlaybackState()
     }
 
     // MARK: - 睡眠定时
@@ -349,18 +390,20 @@ final class PlayerManager: NSObject, ObservableObject {
         updateNowPlaying()
     }
 
-    private func loadCurrent() {
+    private func loadCurrent(resumeAt: Double? = nil) {
         guard let song = currentSong else { return }
         loadGeneration += 1
         let generation = loadGeneration
+        let initialProgress = max(0, min(resumeAt ?? 0, max(song.duration, 0)))
         // 切歌立即暂停旧音频，避免新歌加载期间旧歌继续播放造成“切歌卡住”感
         player?.pause()
         duration = song.duration
-        progress = 0
+        progress = initialProgress
         isPlaying = false
         isBuffering = true
         loadFailed = false
         pushHistory(song)
+        savePersistedPlaybackState()
         Task {
             var urlString: String?
             var resolvedThirdParty: UnblockService.Resolved?
@@ -388,7 +431,7 @@ final class PlayerManager: NSObject, ObservableObject {
                 let notice = self.thirdPartyVIPNotice(for: song, sourceTitle: resolved.sourceTitle)
                 await MainActor.run {
                     guard generation == self.loadGeneration else { return }
-                    self.setupPlayer(url: resolved.url, thirdPartyVIPNotice: notice)
+                    self.setupPlayer(url: resolved.url, thirdPartyVIPNotice: notice, resumeAt: initialProgress)
                 }
                 return
             }
@@ -404,13 +447,16 @@ final class PlayerManager: NSObject, ObservableObject {
                     } else {
                         let hint = thirdPartyAttempted ? "（第三方音源尝试后无结果）" : "（第三方音源未命中）"
                         BeansLogger.shared.log("播放失败：\(song.name) - 无法解析播放地址\(hint)｜音质=\(quality.level) 免费听歌=\(enableUnblock ? "开" : "关")", level: .error)
+                        if song.isVIP && enableUnblock {
+                            ToastCenter.shared.show("VIP 歌曲播放失败，可能是 API 调用上限了，等待恢复即可", duration: 3)
+                        }
                     }
                 }
                 return
             }
             await MainActor.run {
                 guard generation == self.loadGeneration else { return }
-                self.setupPlayer(url: url)
+                self.setupPlayer(url: url, resumeAt: initialProgress)
             }
         }
     }
@@ -560,7 +606,8 @@ final class PlayerManager: NSObject, ObservableObject {
     }
 
 
-    private func setupPlayer(url: URL, thirdPartyVIPNotice: ThirdPartyVIPNotice? = nil) {
+    private func setupPlayer(url: URL, thirdPartyVIPNotice: ThirdPartyVIPNotice? = nil, resumeAt: Double = 0) {
+        prepareForSystemPlayback()
         configureAudioSession()
         UIApplication.shared.beginReceivingRemoteControlEvents()
         removeCurrentObservers()
@@ -613,6 +660,11 @@ final class PlayerManager: NSObject, ObservableObject {
             }
             self.showPendingThirdPartyVIPNoticeIfNeeded()
         }
+        if resumeAt > 0.5 {
+            let seekTime = CMTime(seconds: resumeAt, preferredTimescale: 600)
+            player.seek(to: seekTime, toleranceBefore: .zero, toleranceAfter: .zero)
+            progress = resumeAt
+        }
         player.playImmediately(atRate: Float(rate))
         isPlaying = true
         isBuffering = false
@@ -629,6 +681,10 @@ final class PlayerManager: NSObject, ObservableObject {
                 if abs(time.seconds - self.lastPublishedProgress) >= 0.18 {
                     self.lastPublishedProgress = time.seconds
                     self.progress = time.seconds
+                    if abs(time.seconds - self.lastPersistedProgress) >= 2.0 {
+                        self.lastPersistedProgress = time.seconds
+                        self.savePersistedPlaybackState()
+                    }
                 }
             }
             if let itemDuration = player.currentItem?.duration, itemDuration.isNumeric {
@@ -749,7 +805,19 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
+    /// 延后初始化系统音频服务，降低自签安装后首次启动时的兼容性风险。
+    /// 播放真正开始前由 setupPlayer 兜底调用，因此不会影响播放器功能。
+    private func prepareForSystemPlayback() {
+        guard !systemPlaybackPrepared else { return }
+        systemPlaybackPrepared = true
+        observeInterruptions()
+        observeRouteChanges()
+        setupRemoteCommands()
+    }
+
     private func observeRouteChanges() {
+        guard !routeObserverInstalled else { return }
+        routeObserverInstalled = true
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleRouteChange(_:)),
@@ -770,6 +838,8 @@ final class PlayerManager: NSObject, ObservableObject {
     // MARK: - 来电/中断处理
 
     private func observeInterruptions() {
+        guard !interruptionObserverInstalled else { return }
+        interruptionObserverInstalled = true
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleInterruption(_:)),
@@ -834,6 +904,37 @@ final class PlayerManager: NSObject, ObservableObject {
         playCounts = saved
     }
 
+    private func savePersistedPlaybackState() {
+        guard !queue.isEmpty, queue.indices.contains(currentIndex) else {
+            defaults.removeObject(forKey: playbackStateKey)
+            return
+        }
+        let state = PersistedPlaybackState(
+            queue: queue,
+            currentIndex: currentIndex,
+            progress: progress,
+            duration: duration,
+            savedAt: Date()
+        )
+        if let data = try? JSONEncoder().encode(state) {
+            defaults.set(data, forKey: playbackStateKey)
+        }
+    }
+
+    private func restorePersistedPlaybackState() {
+        guard let data = defaults.data(forKey: playbackStateKey),
+              let saved = try? JSONDecoder().decode(PersistedPlaybackState.self, from: data),
+              !saved.queue.isEmpty else { return }
+        queue = saved.queue
+        currentIndex = min(max(saved.currentIndex, 0), saved.queue.count - 1)
+        duration = max(saved.duration, currentSong?.duration ?? 0)
+        progress = max(0, min(saved.progress, max(duration, currentSong?.duration ?? 0)))
+        isPlaying = false
+        isBuffering = false
+        loadFailed = false
+        buildPlayOrder()
+    }
+
     /// 听歌排行：按播放次数排序的前几首
     var topPlayed: [(song: Song, count: Int)] {
         var result: [(song: Song, count: Int)] = []
@@ -845,7 +946,7 @@ final class PlayerManager: NSObject, ObservableObject {
         return result.sorted { $0.count > $1.count }.prefix(8).map { $0 }
     }
 
-    // MARK: - 锁屏/控制中心
+    // MARK: - 系统正在播放
 
     private func updateNowPlaying() {
         guard let song = currentSong else { return }
@@ -879,6 +980,8 @@ final class PlayerManager: NSObject, ObservableObject {
     }
 
     private func setupRemoteCommands() {
+        guard !remoteCommandsInstalled else { return }
+        remoteCommandsInstalled = true
         let center = MPRemoteCommandCenter.shared()
         center.playCommand.isEnabled = true
         center.pauseCommand.isEnabled = true

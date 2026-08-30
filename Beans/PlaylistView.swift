@@ -12,6 +12,7 @@ struct PlaylistView: View {
     @EnvironmentObject private var player: PlayerManager
     @EnvironmentObject private var auth: AuthStore
     @EnvironmentObject private var theme: ThemeStore
+    @ObservedObject private var favorites = FavoritesStore.shared
 
     let playlist: Playlist
     @State private var tracks: [Song] = []
@@ -19,6 +20,7 @@ struct PlaylistView: View {
     @State private var errorMessage: String?
     @State private var searchText = ""
     @State private var sortMode: PlaylistSortMode = .original
+    @AppStorage("beans.homeHeaderHideSort") private var hideSortButton = false
 
     var body: some View {
         let _ = theme.accent
@@ -35,9 +37,11 @@ struct PlaylistView: View {
                 } else {
                     List {
                         header
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                         Section {
                             ForEach(Array(displayedTracks.enumerated()), id: \.element.identityKey) { index, song in
-                                SongCell(song: song, glassRow: true) {
+                                SongCell(song: song, glassRow: true, playbackContext: displayedTracks, playbackIndex: index) {
                                     player.play(songs: displayedTracks, startAt: index)
                                 }
                                 .listRowBackground(Color.clear)
@@ -109,20 +113,22 @@ struct PlaylistView: View {
                 .padding(.vertical, 9)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-                Menu {
-                    Picker("排序", selection: $sortMode) {
-                        ForEach(PlaylistSortMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
+                if !hideSortButton {
+                    Menu {
+                        Picker("排序", selection: $sortMode) {
+                            ForEach(PlaylistSortMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
                         }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.beansAmber)
+                            .frame(width: 38, height: 38)
+                            .background(.ultraThinMaterial, in: Circle())
                     }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Color.beansAmber)
-                        .frame(width: 38, height: 38)
-                        .background(.ultraThinMaterial, in: Circle())
+                    .buttonStyle(GlassPressButtonStyle())
                 }
-                .buttonStyle(GlassPressButtonStyle())
             }
         }
         .padding(14)
@@ -155,17 +161,26 @@ struct PlaylistView: View {
     private func load() async {
         loading = true
         errorMessage = nil
+        BeansLogger.shared.log("歌单页面打开 source=\(playlist.source.rawValue) id=\(playlist.id) name=\(playlist.name) advertisedCount=\(playlist.trackCount)", level: .info)
         do {
             if playlist.source == .kugou {
                 tracks = try await KugouMusicAPI.shared.playlistSongs(listID: playlist.id)
             } else if playlist.source == .qq {
                 tracks = try await QQMusicAPI.shared.playlistSongs(listID: playlist.id)
+                // 云端收藏接口临时被风控或返回空时，至少展示已同步到本机的 QQ 收藏，
+                // 避免“我的喜欢”进入后变成空白页面。
+                if tracks.isEmpty, playlist.id == QQMusicAPI.qqLikedPlaylistID {
+                    tracks = favorites.qqFavoriteSongs
+                    BeansLogger.shared.log("QQ 我的喜欢页面网络结果为空，使用本地收藏回退 count=\(tracks.count)", level: tracks.isEmpty ? .warn : .info)
+                }
             } else {
                 tracks = try await NetEaseAPI.shared.playlistTracks(id: playlist.id)
             }
+            BeansLogger.shared.log("歌单页面加载完成 source=\(playlist.source.rawValue) id=\(playlist.id) name=\(playlist.name) count=\(tracks.count) error=无", level: tracks.isEmpty ? .warn : .info)
             loading = false
         } catch {
             errorMessage = error.localizedDescription
+            BeansLogger.shared.log("歌单页面加载失败 source=\(playlist.source.rawValue) id=\(playlist.id) name=\(playlist.name) error=\(error.localizedDescription)", level: .error)
             loading = false
         }
     }

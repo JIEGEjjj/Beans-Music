@@ -1,9 +1,9 @@
 import SwiftUI
 
 enum LibraryProvider: String, CaseIterable, Identifiable {
-    case netease = "网易云"
+    case netease = "网易云音乐"
     case qq = "QQ音乐"
-    case kugou = "酷狗"
+    case kugou = "酷狗音乐"
 
     var id: String { rawValue }
 
@@ -54,6 +54,7 @@ struct LibraryView: View {
     @State private var pendingDelete: Playlist?
     @State private var showDeleteConfirm = false
     @State private var source: LibraryProvider = .netease
+    @AppStorage("beans.homeHeaderHideSort") private var hideSortButton = false
     @State private var qqPlaylists: [Playlist] = []
     @State private var qqLoading = false
     @State private var qqSavedAt = Date.distantPast
@@ -94,6 +95,8 @@ struct LibraryView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 190)
+                .frame(maxWidth: 860)
+                .frame(maxWidth: .infinity)
             }
             .beansScrollIndicatorsHidden()
             .refreshable {
@@ -132,15 +135,25 @@ struct LibraryView: View {
             HistoryView()
                 .environmentObject(player)
                 .environmentObject(auth)
+                .environmentObject(theme)
         }
         .sheet(isPresented: $showSectionSort) {
-            SectionOrderSheet(title: "音乐库板块排序", sections: SectionOrderStore.libraryDefaults, order: $libraryOrder)
+            SectionOrderSheet(
+                title: "音乐库板块排序",
+                sections: SectionOrderStore.libraryDefaults,
+                order: $libraryOrder,
+                platformOrder: Binding(
+                    get: { platformPrefs.orderedRaw },
+                    set: { platformPrefs.orderedRaw = $0 }
+                )
+            )
                 .onDisappear { SectionOrderStore.save(SectionOrderStore.libraryKey, libraryOrder) }
         }
         .sheet(item: $selectedPlaylist) { playlist in
             PlaylistView(playlist: playlist)
                 .environmentObject(player)
                 .environmentObject(auth)
+                .environmentObject(theme)
         }
         .alert("新建歌单", isPresented: $showCreatePlaylist) {
             TextField("歌单名称", text: $newPlaylistName)
@@ -168,14 +181,12 @@ struct LibraryView: View {
                 }
                 Spacer()
                 HStack(spacing: 10) {
+                if !hideSortButton {
                     GlassIconButton(systemName: "arrow.up.arrow.down") {
                         BeansHaptics.tap()
                         showSectionSort = true
                     }
-                    GlassIconButton(systemName: "arrow.clockwise") {
-                        BeansHaptics.tap()
-                        Task { await auth.loadLibrary() }
-                    }
+                }
                 }
             }
         }
@@ -184,7 +195,7 @@ struct LibraryView: View {
 
     private var librarySubtitle: String {
         switch source {
-        case .netease: return "网易云歌单"
+        case .netease: return "网易云音乐歌单"
         case .qq: return "QQ 音乐收藏与歌单"
         case .kugou: return "酷狗云端歌单"
         }
@@ -523,11 +534,12 @@ struct LibraryView: View {
             return
         }
         // 会话内短缓存：5 分钟内不重复拉取，避免每次打开界面都重新加载（下拉可强制刷新）
-        if !force, Date().timeIntervalSince(qqSavedAt) < 300 { return }
+        if !force, !qqPlaylists.isEmpty, Date().timeIntervalSince(qqSavedAt) < 300 { return }
         qqLoading = true
         let list = (try? await QQMusicAPI.shared.userPlaylists(uin: qqAuth.uin)) ?? []
         qqPlaylists = list
-        qqSavedAt = Date()
+        await favorites.syncQQFromCloud()
+        if !list.isEmpty { qqSavedAt = Date() }
         qqLoading = false
         // 封面兜底：歌单封面缺失时默认取第一首歌曲封面（列表先展示，封面后台补齐）
         if !list.isEmpty { await fillQQPlaylistCovers(list) }
@@ -539,12 +551,12 @@ struct LibraryView: View {
             kugouLoading = false
             return
         }
-        if !force, Date().timeIntervalSince(kugouSavedAt) < 300 { return }
+        if !force, !kugouPlaylists.isEmpty, Date().timeIntervalSince(kugouSavedAt) < 300 { return }
         kugouLoading = true
         do {
             let list = try await KugouMusicAPI.shared.userPlaylists()
             kugouPlaylists = list
-            kugouSavedAt = Date()
+            if !list.isEmpty { kugouSavedAt = Date() }
         } catch {
             BeansLogger.shared.log("酷狗歌单同步失败：\(error.localizedDescription)", level: .error)
             kugouPlaylists = []

@@ -19,12 +19,17 @@ struct DiscoverView: View {
     /// 主页板块顺序（每日推荐 / 排行榜 / 歌单广场，可自定义）
     @State private var homeOrder = SectionOrderStore.load(SectionOrderStore.homeKey, defaults: SectionOrderStore.homeDefaults)
 
-    /// 当前平台可排序的板块：三个平台都保留主页推荐、排行榜和歌单广场位置。
-    private var availableSections: [String] {
-        source == .qq ? ["每日推荐", "排行榜"] : SectionOrderStore.homeDefaults
-    }
+    /// 三个平台都保留每日推荐、排行榜和歌单板块，QQ 歌单板块展示官网推荐的热门歌单。
+    private var availableSections: [String] { SectionOrderStore.homeDefaults }
     /// 首页数据源：记住上次选择，下次打开仍保持该平台（默认网易云）
     @AppStorage("beans.homeSource") private var homeSourceRaw = SearchProvider.netease.rawValue
+    @AppStorage("beans.homeGreetingText") private var homeGreetingText = ""
+    @AppStorage("beans.homeGreetingSize") private var homeGreetingSize = 30.0
+    @AppStorage("beans.homeGreetingHeight") private var homeGreetingHeight = 0.0
+    @AppStorage("beans.homeGreetingColorHex") private var homeGreetingColorHex = ""
+    @AppStorage("beans.homeHideUsername") private var homeHideUsername = false
+    @AppStorage("beans.homeHeaderHideSort") private var homeHeaderHideSort = false
+    @AppStorage("beans.homeHeaderHideRefresh") private var homeHeaderHideRefresh = true
     private var homeProviders: [SearchProvider] { platformPrefs.enabledSearchProviders }
     /// 首页数据源：网易云 / QQ音乐（与搜索页同一控件样式）
     private var source: SearchProvider {
@@ -81,7 +86,9 @@ struct DiscoverView: View {
                             case "排行榜":
                                 if hasRankData { topListsSection.sectionEntrance(delay: 0.08) }
                             case "歌单广场":
-                                if !personalized.isEmpty { personalizedSection.sectionEntrance(delay: 0.16) }
+                                if source == .qq || !personalized.isEmpty {
+                                    personalizedSection.sectionEntrance(delay: 0.16)
+                                }
                             default:
                                 EmptyView()
                             }
@@ -91,6 +98,8 @@ struct DiscoverView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 190)
+                .frame(maxWidth: 860)
+                .frame(maxWidth: .infinity)
                 }
             }
             .beansScrollIndicatorsHidden()
@@ -149,7 +158,7 @@ struct DiscoverView: View {
                     .environmentObject(player)
             }
             .sheet(item: $selectedQQPlaylist) { playlist in
-                QQPlaylistSongsSheet(playlist: playlist)
+                PlaylistView(playlist: playlist)
                     .environmentObject(player)
                     .environmentObject(auth)
             }
@@ -159,7 +168,15 @@ struct DiscoverView: View {
                     .environmentObject(auth)
             }
             .sheet(isPresented: $showSectionSort) {
-                SectionOrderSheet(title: "主页板块排序", sections: availableSections, order: $homeOrder)
+                SectionOrderSheet(
+                    title: "主页板块排序",
+                    sections: availableSections,
+                    order: $homeOrder,
+                    platformOrder: Binding(
+                        get: { platformPrefs.orderedRaw },
+                        set: { platformPrefs.orderedRaw = $0 }
+                    )
+                )
                     .onDisappear { SectionOrderStore.save(SectionOrderStore.homeKey, homeOrder) }
             }
         }
@@ -171,26 +188,35 @@ struct DiscoverView: View {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(greeting)
-                        .font(BeansFont.appFont(30, .bold))
-                        .foregroundStyle(Color.beansLabel)
-                    Text(auth.user?.nickname ?? "发现好音乐")
-                        .font(BeansFont.appFont(13))
-                        .foregroundStyle(Color.beansComment)
+                        .font(BeansFont.appFont(CGFloat(homeGreetingSize), .bold))
+                        .foregroundStyle(homeGreetingColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !homeHideUsername {
+                        Text(auth.user?.nickname ?? "发现好音乐")
+                            .font(BeansFont.appFont(13))
+                            .foregroundStyle(Color.beansComment)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 Spacer()
                 HStack(spacing: 10) {
-                    GlassIconButton(systemName: "arrow.up.arrow.down") {
-                        BeansHaptics.tap()
-                        showSectionSort = true
+                    if !homeHeaderHideSort {
+                        GlassIconButton(systemName: "arrow.up.arrow.down") {
+                            BeansHaptics.tap()
+                            showSectionSort = true
+                        }
                     }
-                    GlassIconButton(systemName: "arrow.clockwise") {
-                        BeansHaptics.tap()
-                        Task { await load(force: true) }
+                    if !homeHeaderHideRefresh {
+                        GlassIconButton(systemName: "arrow.clockwise") {
+                            BeansHaptics.tap()
+                            Task { await load(force: true) }
+                        }
                     }
                 }
             }
         }
         .padding(.top, 8)
+        .frame(minHeight: homeGreetingHeight > 0 ? homeGreetingHeight : nil, alignment: .top)
     }
 
     /// 平台选择（网易云 / QQ音乐 / 酷狗音乐，样式与搜索页一致）
@@ -237,6 +263,8 @@ struct DiscoverView: View {
     }
 
     private var greeting: String {
+        let custom = homeGreetingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !custom.isEmpty { return custom }
         let hour = Calendar.current.component(.hour, from: Date())
         switch hour {
         case 5..<12: return "早上好"
@@ -494,7 +522,7 @@ struct DiscoverView: View {
 
     private var personalizedSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: source == .qq ? "QQ歌单广场" : "歌单广场")
+            SectionHeader(title: source == .qq ? "QQ音乐热门歌单" : "歌单广场")
             if source == .netease {
                 // 官方分类标签：点击切换分类（「全部」为官方精品歌单）
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -525,31 +553,35 @@ struct DiscoverView: View {
                     .padding(.vertical, 2)
                 }
             }
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                ForEach(displayedPlaylists) { playlist in
-                    Button {
-                        if source == .qq {
-                            selectedQQPlaylist = playlist
-                        } else {
-                            selectedPlaylist = playlist
+            if displayedPlaylists.isEmpty {
+                EmptyStateView(icon: "music.note.list", text: source == .qq ? "QQ音乐热门歌单暂未加载成功\n下拉刷新可重新获取" : "歌单广场暂时没有内容")
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(displayedPlaylists) { playlist in
+                        Button {
+                            if source == .qq {
+                                selectedQQPlaylist = playlist
+                            } else {
+                                selectedPlaylist = playlist
+                            }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                CoverImage(url: playlist.coverURL, size: 144, cornerRadius: 18)
+                                    .frame(maxWidth: .infinity)
+                                Text(playlist.name)
+                                    .font(BeansFont.appFont(12, .medium))
+                                    .foregroundStyle(Color.beansLabel)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background {
+                                BeansGlass(shape: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            }
                         }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            CoverImage(url: playlist.coverURL, size: 144, cornerRadius: 18)
-                                .frame(maxWidth: .infinity)
-                            Text(playlist.name)
-                                .font(BeansFont.appFont(12, .medium))
-                                .foregroundStyle(Color.beansLabel)
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-                        }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background {
-                                                        BeansGlass(shape: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                        }
+                        .buttonStyle(GlassPressButtonStyle(scale: 0.96))
                     }
-                    .buttonStyle(GlassPressButtonStyle(scale: 0.96))
                 }
             }
             if personalized.count > collapsedPlaylistCount {
@@ -650,6 +682,11 @@ struct DiscoverView: View {
         }
     }
 
+    private var homeGreetingColor: Color {
+        if let color = Color(hex: homeGreetingColorHex) { return color }
+        return Color.beansLabel
+    }
+
     /// 网易云歌单广场：切换官方分类时单独拉取（不写缓存）
     private func loadPlaylists(cat: String) async {
         guard source == .netease else { return }
@@ -669,10 +706,13 @@ struct DiscoverView: View {
         snapshot.savedAt = Date()
         switch source {
         case .qq:
-            async let a = QQMusicAPI.shared.recommendSongs(limit: 30)
-            async let b = QQMusicAPI.shared.topLists()
-            async let c = QQMusicAPI.shared.recommendPlaylists(limit: 12)
-            let (dr, tl, pp) = try await (a, b, c)
+            async let a: [Song] = (try? await QQMusicAPI.shared.recommendSongs(limit: 30)) ?? []
+            async let b: [QQTopInfo] = (try? await QQMusicAPI.shared.topLists()) ?? []
+            async let c: [Playlist] = (try? await QQMusicAPI.shared.hotPlaylists(limit: 18)) ?? []
+            let (dr, tl, pp) = await (a, b, c)
+            if pp.isEmpty {
+                BeansLogger.shared.log("QQ音乐热门歌单为空：保留板块并显示空状态", level: .warn)
+            }
             snapshot.dailySongs = dr
             snapshot.qqTopLists = tl
             snapshot.personalized = pp

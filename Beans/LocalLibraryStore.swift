@@ -68,6 +68,33 @@ final class LocalLibraryStore: ObservableObject {
         playlists[idx].songs.append(song)
     }
 
+    func containsSong(_ song: Song?) -> Bool {
+        guard let song else { return false }
+        return playlists.contains { $0.songs.contains { $0.identityKey == song.identityKey } }
+    }
+
+    @discardableResult
+    func addToDefaultFavorites(_ song: Song, name: String = "我的收藏歌单") -> String {
+        let playlist = playlists.first(where: { $0.name == name }) ?? createPlaylist(name: name)
+        let before = playlists.first(where: { $0.id == playlist.id })?.songs.count ?? 0
+        addSong(song, to: playlist.id)
+        let after = playlists.first(where: { $0.id == playlist.id })?.songs.count ?? before
+        return after > before ? "已加入「\(playlist.name)」" : "已在「\(playlist.name)」中"
+    }
+
+    @discardableResult
+    func syncSongs(_ songs: [Song], intoPlaylistNamed name: String = "三平台喜欢") -> Int {
+        let target: LocalPlaylist
+        if let existing = playlists.first(where: { $0.name == name }) {
+            target = existing
+        } else {
+            target = createPlaylist(name: name)
+        }
+        let before = playlists.first(where: { $0.id == target.id })?.songs.count ?? 0
+        for song in songs { addSong(song, to: target.id) }
+        return (playlists.first(where: { $0.id == target.id })?.songs.count ?? before) - before
+    }
+
     func removeSong(playlistID: UUID, songIdentity: String) {
         guard let idx = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
         playlists[idx].songs.removeAll { $0.identityKey == songIdentity }

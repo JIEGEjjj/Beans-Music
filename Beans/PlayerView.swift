@@ -1,14 +1,6 @@
 import SwiftUI
 import UIKit
 
-// MARK: - 全屏播放器（全新重写：极简稳定布局）
-// 布局原则：
-// - 布局全部使用 SwiftUI 自动布局（VStack/HStack/ZStack），任何屏幕与加载时序下都稳定；
-//   封面⇄歌词切换动画使用 matchedGeometryEffect 共享元素（封面从居中飞到左上角），仅作用于过渡动画，不影响布局约束。
-// - 专辑模式与歌词模式是两个独立视图，if/else + transition 切换，各自内部自然居中，任何屏幕与加载时序下都稳定。
-// - 封面使用固定尺寸 CoverImage（AsyncImage 仅在 overlay 中渲染），封面加载、切歌都不会影响布局。
-// - 底部控制栏为普通材质圆角面板，按钮等宽对称分布，无液态玻璃依赖。
-// 音频播放 / 网络 / 登录业务逻辑保持不变。
 
 struct PlayerView: View {
     @EnvironmentObject private var theme: ThemeStore
@@ -16,6 +8,7 @@ struct PlayerView: View {
     @EnvironmentObject private var clock: PlaybackClock
     @EnvironmentObject private var auth: AuthStore
     @EnvironmentObject private var favorites: FavoritesStore
+    @ObservedObject private var localLibrary = LocalLibraryStore.shared
     @Environment(\.colorScheme) private var colorScheme
     @Binding var isPresented: Bool
 
@@ -28,6 +21,8 @@ struct PlayerView: View {
     @State private var showDownloadPicker = false
     @State private var showShare = false
     @State private var showMoreActions = false
+    @State private var showMoreSettingsHint = false
+    @AppStorage("beans.playerMoreSettingsHintSeen") private var playerMoreSettingsHintSeen = false
     /// 下载完成后直接弹原生分享（用户自行选择保存或转发）
     @State private var shareFile: ShareFileItem?
     @State private var sharedFileURL: URL?
@@ -52,11 +47,16 @@ struct PlayerView: View {
     @AppStorage("beans.lyricSpacing") private var lyricLineSpacing = 24
     /// 播放器氛围：背景流动开关 / 速度 / 呼吸光晕强度
     @AppStorage("beans.playerBreath") private var playerBreath = 0.6
+    @AppStorage("beans.playerDustMode") private var playerDustModeRaw = BeansPlayerDustMode.off.rawValue
+    @AppStorage("beans.playerDustDensity") private var playerDustDensity = 1.0
+    @AppStorage("beans.playerDustSize") private var playerDustSize = 1.0
     /// 播放控件颜色是否跟随封面主色；关闭后使用全局主题色
     @AppStorage("beans.playerControlsUseCoverColor") private var controlsUseCoverColor = true
+    @AppStorage("beans.playerMainIconColorHex") private var playerMainIconColorHex = ""
+    @AppStorage("beans.playerSecondaryIconColorHex") private var playerSecondaryIconColorHex = ""
+    @AppStorage("beans.playerPrimaryButtonColorHex") private var playerPrimaryButtonColorHex = ""
     /// 播放器顶部与底部控制按钮的统一样式
     @AppStorage("beans.playerButtonStyle") private var playerButtonStyleRaw = BeansPlayerButtonStyle.glass.rawValue
-    /// 显示歌词翻译（借鉴 Kumone：网易云 tlyric）
     @AppStorage("beans.lyricTranslation") private var lyricTranslation = true
     /// 进度条样式：0 流光 / 1 辉光 / 2 极光 / 3 波浪
     @AppStorage("beans.progressBarStyle") private var progressBarStyle = 0
@@ -95,6 +95,14 @@ struct PlayerView: View {
     @AppStorage("beans.lyricBackground.image") private var lyricBackgroundImagePath = ""
     @AppStorage("beans.lyricBackground.blur") private var lyricBackgroundBlur = 12.0
     @AppStorage("beans.lyricBackground.syncCover") private var lyricBackgroundSyncCover = false
+    @AppStorage("beans.albumTitleColorHex") private var albumTitleColorHex = ""
+    @AppStorage("beans.albumArtistColorHex") private var albumArtistColorHex = ""
+    @AppStorage("beans.albumPreviewLyricColorHex") private var albumPreviewLyricColorHex = ""
+    @AppStorage("beans.albumPreviewDimColorHex") private var albumPreviewDimColorHex = ""
+    @AppStorage("beans.albumTextGradient") private var albumTextGradient = false
+    @AppStorage("beans.albumTextGlow") private var albumTextGlow = false
+    @AppStorage("beans.albumTextGlowIntensity") private var albumTextGlowIntensity = 1.0
+    @AppStorage("beans.coverPlayerStyle") private var coverPlayerStyleRaw = BeansCoverPlayerStyle.classic.rawValue
     /// 侧边滑动手势当前位移（刷视频式切歌过渡）
     @State private var swipeOffset: CGFloat = 0
     @State private var coverDrag: CGSize = .zero
@@ -132,23 +140,60 @@ struct PlayerView: View {
     }
 
     private var controlAccent: Color {
-        controlsUseCoverColor ? palette.accent : Color.beansAmber
+        if playerPrimaryButtonColorHex.hasPrefix("#"), let color = Color(hex: playerPrimaryButtonColorHex) {
+            return color
+        }
+        return controlsUseCoverColor ? palette.accent : Color.beansAmber
     }
 
     private var controlAccentSoft: Color {
-        controlsUseCoverColor ? palette.accentSoft : Color.beansAmber.opacity(0.28)
+        return controlsUseCoverColor ? palette.accentSoft : Color.beansAmber.opacity(0.28)
     }
 
     private var playerButtonStyle: BeansPlayerButtonStyle {
         BeansPlayerButtonStyle(rawValue: playerButtonStyleRaw) ?? .glass
     }
 
+    private var coverPlayerStyle: BeansCoverPlayerStyle {
+        return BeansCoverPlayerStyle(rawValue: coverPlayerStyleRaw) ?? .classic
+    }
+
+    private var playerDustMode: BeansPlayerDustMode {
+        return BeansPlayerDustMode(rawValue: playerDustModeRaw) ?? .off
+    }
+
     private var playerButtonText: Color {
-        palette.text
+        if playerMainIconColorHex.hasPrefix("#"), let color = Color(hex: playerMainIconColorHex) {
+            return color
+        }
+        return palette.text
     }
 
     private var playerButtonSecondaryText: Color {
-        palette.secondary
+        if playerSecondaryIconColorHex.hasPrefix("#"), let color = Color(hex: playerSecondaryIconColorHex) {
+            return color
+        }
+        return palette.secondary
+    }
+
+    private var albumTitleColor: Color {
+        if albumTitleColorHex.hasPrefix("#"), let color = Color(hex: albumTitleColorHex) { return color }
+        return palette.text
+    }
+
+    private var albumArtistColor: Color {
+        if albumArtistColorHex.hasPrefix("#"), let color = Color(hex: albumArtistColorHex) { return color }
+        return palette.secondary
+    }
+
+    private var albumPreviewLyricColor: Color {
+        if albumPreviewLyricColorHex.hasPrefix("#"), let color = Color(hex: albumPreviewLyricColorHex) { return color }
+        return palette.text
+    }
+
+    private var albumPreviewDimColor: Color {
+        if albumPreviewDimColorHex.hasPrefix("#"), let color = Color(hex: albumPreviewDimColorHex) { return color }
+        return palette.secondary
     }
 
     private var progressAccent: Color {
@@ -156,6 +201,35 @@ struct PlayerView: View {
             return color
         }
         return controlAccent
+    }
+
+    private var albumTitleForeground: AnyShapeStyle {
+        albumForeground(primary: albumTitleColor, secondary: albumPreviewLyricColor)
+    }
+
+    private var albumArtistForeground: AnyShapeStyle {
+        albumForeground(primary: albumArtistColor, secondary: albumTitleColor)
+    }
+
+    private var albumPreviewForeground: AnyShapeStyle {
+        albumForeground(primary: albumPreviewLyricColor, secondary: albumTitleColor)
+    }
+
+    private var albumPreviewDimForeground: AnyShapeStyle {
+        albumTextGradient
+            ? AnyShapeStyle(LinearGradient(colors: [albumPreviewDimColor.opacity(0.72), albumArtistColor.opacity(0.62)], startPoint: .leading, endPoint: .trailing))
+            : AnyShapeStyle(albumPreviewDimColor)
+    }
+
+    private func albumForeground(primary: Color, secondary: Color) -> AnyShapeStyle {
+        if albumTextGradient {
+            return AnyShapeStyle(LinearGradient(colors: [primary, secondary], startPoint: .topLeading, endPoint: .bottomTrailing))
+        }
+        return AnyShapeStyle(primary)
+    }
+
+    private func albumGlow(_ color: Color, strong: Bool = false) -> Color {
+        albumTextGlow ? color.opacity((strong ? 0.46 : 0.30) * albumTextGlowIntensity) : .clear
     }
 
     private var playerVisualsActive: Bool {
@@ -285,6 +359,24 @@ struct PlayerView: View {
                 }
             }
         }
+        .background {
+            HighRefreshConfigurator()
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+        }
+        .overlay(alignment: .top) {
+            if showMoreSettingsHint {
+                Text("点击顶部中间正在播放的标题，可打开更多设置")
+                    .font(BeansFont.appFont(13, .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.black.opacity(0.58), in: Capsule())
+                    .padding(.top, 62)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .zIndex(120)
+            }
+        }
         .task(id: song?.identityKey) {
             let songKey = song?.identityKey ?? ""
             dominantColor = nil
@@ -311,12 +403,28 @@ struct PlayerView: View {
             if let path = LyricBackgroundStore.restoreFromBackup(), lyricBackgroundImagePath != path {
                 lyricBackgroundImagePath = path
             }
+            if !playerMoreSettingsHintSeen {
+                playerMoreSettingsHintSeen = true
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                    showMoreSettingsHint = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) {
+                    withAnimation(.easeOut(duration: 0.22)) {
+                        showMoreSettingsHint = false
+                    }
+                }
+            }
         }
-        .sheet(isPresented: $showQueue) { QueueView().environmentObject(player) }
+        .sheet(isPresented: $showQueue) {
+            QueueView()
+                .environmentObject(player)
+                .environmentObject(theme)
+        }
         .sheet(isPresented: $showSleepTimer) { SleepTimerSheet().environmentObject(player) }
         .sheet(isPresented: $showAddToPlaylist) {
             if let song {
-                AddToPlaylistSheet(song: song).environmentObject(auth)
+                AddToPlaylistSheet(song: song)
+                    .environmentObject(auth)
             }
         }
         .sheet(isPresented: $showComments) {
@@ -326,6 +434,8 @@ struct PlayerView: View {
         }
         .fullScreenCover(isPresented: $showPlayerSettings) {
             PlayerSettingsSheet()
+                .environmentObject(theme)
+                .environmentObject(player)
         }
         .sheet(isPresented: $showShare) {
             if let song {
@@ -382,6 +492,15 @@ struct PlayerView: View {
             )
             if !lyricBackgroundImagePath.isEmpty && (showLyrics || lyricBackgroundSyncCover) {
                 lyricPlayerBackgroundLayer
+            } else if theme.backgroundSyncAll, let image = theme.customBackgroundImage {
+                WallpaperImage(image: image)
+                LinearGradient(
+                    colors: colorScheme == .dark
+                        ? [.black.opacity(0.40), .black.opacity(0.58)]
+                        : [.white.opacity(0.12), .black.opacity(0.24)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             } else {
                 CoverBlurBackground(url: song?.coverURL, scheme: colorScheme)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -390,6 +509,9 @@ struct PlayerView: View {
                 accent: palette.accent,
                 secondary: palette.secondary,
                 isPlaying: playerVisualsActive,
+                dustMode: playerDustMode,
+                dustDensity: playerDustDensity,
+                dustSize: playerDustSize,
                 breath: playerBreath
             )
             if djVisualEnabled {
@@ -481,21 +603,20 @@ struct PlayerView: View {
             Button {
                 BeansHaptics.tap()
                 if let song {
-                    Task {
-                        if await favorites.toggle(song) {
-                            ToastCenter.shared.show(favorites.isLiked(song) ? "已收藏" : "已取消收藏")
-                        } else {
-                            ToastCenter.shared.show("收藏失败，请稍后再试")
-                        }
+                    if localLibrary.playlists.count > 1 {
+                        showAddToLocalPlaylist = true
+                    } else {
+                        ToastCenter.shared.show(localLibrary.addToDefaultFavorites(song))
+                        BeansHaptics.success()
                     }
                 }
             } label: {
-                Image(systemName: favorites.isLiked(song) ? "heart.fill" : "heart")
+                Image(systemName: localLibrary.containsSong(song) ? "heart.fill" : "heart")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(favorites.isLiked(song) ? Color(red: 0.95, green: 0.33, blue: 0.42) : playerButtonText)
+                    .foregroundStyle(localLibrary.containsSong(song) ? Color(red: 0.95, green: 0.33, blue: 0.42) : playerButtonText)
                     .frame(width: 38, height: 38)
                     .background {
-                        playerButtonSurface(size: 38, active: favorites.isLiked(song))
+                        playerButtonSurface(size: 38, active: localLibrary.containsSong(song))
                     }
                     .clipShape(Circle())
             }
@@ -542,9 +663,9 @@ struct PlayerView: View {
                 showMoreActions = false
                 showSleepTimer = true
             }
-            moreActionRow("添加到歌单", systemName: "text.badge.plus") {
+            moreActionRow("添加到本地歌单", systemName: "text.badge.plus") {
                 showMoreActions = false
-                showAddToPlaylist = true
+                showAddToLocalPlaylist = true
             }
             moreActionRow("下载歌曲", systemName: "arrow.down.circle") {
                 showMoreActions = false
@@ -553,10 +674,6 @@ struct PlayerView: View {
             moreActionRow("分享歌曲", systemName: "square.and.arrow.up") {
                 showMoreActions = false
                 showShare = true
-            }
-            moreActionRow("加入本地歌单", systemName: "internaldrive") {
-                showMoreActions = false
-                showAddToLocalPlaylist = true
             }
             moreActionRow("播放器设置", systemName: "slider.horizontal.3") {
                 showMoreActions = false
@@ -621,7 +738,17 @@ struct PlayerView: View {
     }
 
     /// 专辑模式：封面居中 + 歌名/歌手 + 轻点提示（VStack 自动居中）
+    @ViewBuilder
     private func albumPanel(geo: GeometryProxy) -> some View {
+        switch coverPlayerStyle {
+        case .classic:
+            classicAlbumPanel(geo: geo)
+        case .controlPanel:
+            controlPanelAlbumPanel(geo: geo)
+        }
+    }
+
+    private func classicAlbumPanel(geo: GeometryProxy) -> some View {
         let size = coverSize(in: geo)
         let coverRadius: CGFloat = circularCover ? size / 2 : min(24, size * 0.08)
         return VStack(spacing: 16) {
@@ -712,10 +839,11 @@ struct PlayerView: View {
                 HStack(spacing: 8) {
                     Text(song?.name ?? "未在播放")
                         .font(BeansFont.appFont(22, .bold))
-                        .foregroundStyle(palette.text)
+                        .foregroundStyle(albumTitleForeground)
                         .lineLimit(2)
                         .minimumScaleFactor(0.55)
                         .multilineTextAlignment(.center)
+                        .shadow(color: albumGlow(albumTitleColor, strong: true), radius: albumTextGlow ? 10 : 0, y: 2)
                     if song?.isVIP == true {
                         Text("VIP")
                             .font(BeansFont.appFont(9, .bold))
@@ -726,12 +854,13 @@ struct PlayerView: View {
                             .shadow(color: palette.accent.opacity(0.45), radius: 6)
                     }
                 }
-                .shadow(color: palette.accent.opacity(0.30), radius: 10)
+                .shadow(color: albumTextGlow ? palette.accent.opacity(0.30) : .clear, radius: albumTextGlow ? 10 : 0)
                 Text(subtitle)
                     .font(BeansFont.appFont(14, .medium))
-                    .foregroundStyle(palette.secondary)
+                    .foregroundStyle(albumArtistForeground)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .shadow(color: albumGlow(albumArtistColor), radius: albumTextGlow ? 7 : 0, y: 1)
                     .contentShape(Rectangle())
                     .onTapGesture { openArtistHome() }
             }
@@ -767,6 +896,234 @@ struct PlayerView: View {
         )
     }
 
+    private func controlPanelAlbumPanel(geo: GeometryProxy) -> some View {
+        let panelWidth = min(geo.size.width - 58, 388)
+        let panelHeight = min(max(376, geo.size.height * 0.50), 458)
+        let coverHeight = min(panelHeight * 0.38, 176)
+        let corner: CGFloat = 28
+
+        return VStack(spacing: 0) {
+            Spacer(minLength: 10)
+
+            VStack(spacing: 12) {
+                Button {
+                    toggleLyrics()
+                } label: {
+                    ZStack(alignment: .bottomLeading) {
+                        CoverImage(
+                            url: song?.coverURL,
+                            size: panelWidth - 28,
+                            cornerRadius: 24,
+                            emptyHint: player.isBuffering ? "等待开始播放…" : nil
+                        )
+                        .frame(width: panelWidth - 28, height: coverHeight)
+                        .clipped()
+                        .modifier(CoverSpin(enabled: circularCover && circularCoverSpin, isPlaying: playerVisualsActive))
+                        .scaleEffect(coverSwitchPulse ? 0.96 : 1)
+                        .blur(radius: coverSwitchPulse ? 1.5 : 0)
+                        .rotation3DEffect(.degrees(Double(coverDrag.height / -24)), axis: (x: 1, y: 0, z: 0), perspective: 0.45)
+                        .rotation3DEffect(.degrees(Double(coverDrag.width / 24)), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
+                        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: coverDrag)
+                        .animation(.easeOut(duration: 0.24), value: coverSwitchPulse)
+
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.54)],
+                            startPoint: .center,
+                            endPoint: .bottom
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+
+                        HStack(spacing: 8) {
+                            Image(systemName: player.isPlaying ? "waveform" : "pause.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(player.isPlaying ? "正在播放" : "已暂停")
+                                .font(BeansFont.appFont(12, .semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(.black.opacity(0.28), in: Capsule())
+                        .padding(12)
+                    }
+                    .frame(width: panelWidth - 28, height: coverHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .strokeBorder(.white.opacity(0.20), lineWidth: 1)
+                    }
+                    .shadow(color: palette.accent.opacity(0.28), radius: 20, y: 10)
+                }
+                .buttonStyle(GlassPressButtonStyle(scale: 0.965))
+                .gesture(
+                    DragGesture(minimumDistance: 15)
+                        .onChanged { value in
+                            guard swipeSwitchSong else { return }
+                            coverDrag = value.translation
+                            let h = value.translation.height
+                            if abs(h) > abs(value.translation.width) {
+                                swipeOffset = h
+                            }
+                        }
+                        .onEnded { value in
+                            handleSwipeEnd(height: value.translation.height)
+                        }
+                )
+                .modifier(Layoutable(part: .controlCenterCover, enabled: layoutMode, data: $layoutData))
+
+                VStack(spacing: 4) {
+                    Text(song?.name ?? "未在播放")
+                        .font(BeansFont.appFont(20, .bold))
+                        .foregroundStyle(albumTitleForeground)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.58)
+                        .multilineTextAlignment(.center)
+                        .shadow(color: albumGlow(albumTitleColor, strong: true), radius: albumTextGlow ? 10 : 0, y: 2)
+                    Text(subtitle)
+                        .font(BeansFont.appFont(13, .medium))
+                        .foregroundStyle(albumArtistForeground)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .shadow(color: albumGlow(albumArtistColor), radius: albumTextGlow ? 7 : 0, y: 1)
+                        .contentShape(Rectangle())
+                        .onTapGesture { openArtistHome() }
+                }
+                .padding(.horizontal, 18)
+                .modifier(Layoutable(part: .controlCenterTitle, enabled: layoutMode, data: $layoutData))
+
+                controlPanelLyricPreview
+                    .modifier(Layoutable(part: .controlCenterLyric, enabled: layoutMode, data: $layoutData))
+
+                HStack(spacing: 12) {
+                    controlPanelAction(icon: localLibrary.containsSong(song) ? "heart.fill" : "heart", title: "收藏", active: localLibrary.containsSong(song)) {
+                        if let song {
+                            BeansHaptics.tap()
+                            if localLibrary.playlists.count > 1 {
+                                showAddToLocalPlaylist = true
+                            } else {
+                                ToastCenter.shared.show(localLibrary.addToDefaultFavorites(song))
+                                BeansHaptics.success()
+                            }
+                        }
+                    }
+                    controlPanelAction(icon: "text.bubble", title: "评论") {
+                        showComments = true
+                    }
+                    controlPanelAction(icon: "arrow.down.circle", title: "下载") {
+                        showDownloadPicker = true
+                    }
+                    controlPanelAction(icon: "ellipsis", title: "更多") {
+                        showMoreActions = true
+                    }
+                }
+                .padding(.horizontal, 14)
+                .modifier(Layoutable(part: .controlCenterActions, enabled: layoutMode, data: $layoutData))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .frame(width: panelWidth, height: panelHeight, alignment: .top)
+            .background {
+                controlPanelSurface(corner: corner)
+            }
+            .shadow(color: .black.opacity(colorScheme == .dark ? 0.34 : 0.18), radius: 28, y: 14)
+            .modifier(Layoutable(part: .controlCenter, enabled: layoutMode, data: $layoutData))
+
+            Spacer(minLength: 8)
+        }
+        .padding(.bottom, deckInset + geo.safeAreaInsets.bottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .offset(y: swipeOffset)
+        .opacity(1 - min(abs(swipeOffset) / 260, 0.35))
+        .gesture(
+            DragGesture(minimumDistance: 15)
+                .onChanged { value in
+                    guard swipeSwitchSong else { return }
+                    coverDrag = value.translation
+                    let h = value.translation.height
+                    if abs(h) > abs(value.translation.width) {
+                        swipeOffset = h
+                    }
+                }
+                .onEnded { value in
+                    handleSwipeEnd(height: value.translation.height)
+                }
+        )
+    }
+
+    private func controlPanelSurface(corner: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
+        return ZStack {
+            BeansGlass(shape: shape)
+            shape
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            palette.accent.opacity(colorScheme == .dark ? 0.24 : 0.18),
+                            Color.white.opacity(colorScheme == .dark ? 0.08 : 0.28),
+                            palette.secondary.opacity(colorScheme == .dark ? 0.12 : 0.10),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            shape
+                .strokeBorder(.white.opacity(colorScheme == .dark ? 0.24 : 0.38), lineWidth: 0.9)
+            shape
+                .strokeBorder(palette.accent.opacity(0.18), lineWidth: 1.4)
+                .blur(radius: 0.4)
+        }
+    }
+
+    private var controlPanelLyricPreview: some View {
+        let rows = lyricPreviewRows
+        return VStack(spacing: 5) {
+            if rows.isEmpty {
+                Text("暂无歌词，点击封面查看完整歌词")
+                    .font(BeansFont.appFont(12, .medium))
+                    .foregroundStyle(albumPreviewDimForeground)
+                    .lineLimit(1)
+            } else {
+                ForEach(Array(rows.prefix(3).enumerated()), id: \.offset) { _, item in
+                    Text(item.text)
+                        .font(BeansFont.appFont(item.isCurrent ? 14 : 12, item.isCurrent ? .bold : .regular))
+                        .foregroundStyle(item.isCurrent ? albumPreviewForeground : albumPreviewDimForeground)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                        .frame(maxWidth: .infinity)
+                        .scaleEffect(item.isCurrent ? 1.02 : 0.96)
+                        .shadow(color: albumGlow(item.isCurrent ? albumPreviewLyricColor : albumPreviewDimColor), radius: albumTextGlow && item.isCurrent ? 8 : 0, y: 1)
+                        .animation(.easeInOut(duration: 0.18), value: item.isCurrent)
+                }
+            }
+        }
+        .frame(height: 58)
+        .padding(.horizontal, 18)
+        .contentShape(Rectangle())
+        .onTapGesture { toggleLyrics() }
+    }
+
+    private func controlPanelAction(icon: String, title: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+        Button {
+            BeansHaptics.tap()
+            action()
+        } label: {
+            VStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 30, height: 30)
+                    .background(
+                        Circle()
+                            .fill(active ? controlAccent.opacity(0.24) : Color.white.opacity(0.08))
+                    )
+                Text(title)
+                    .font(BeansFont.appFont(10, .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(active ? controlAccent : albumPreviewDimColor)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(GlassPressButtonStyle(scale: 0.92))
+    }
+
     /// 封面下歌词阅览：最多 5 行，跟随当前播放行自动滚动预览
     private var lyricPreviewBox: some View {
         let rows = lyricPreviewRows
@@ -774,7 +1131,7 @@ struct PlayerView: View {
             if rows.isEmpty {
                 Text("暂无歌词，点击封面查看完整歌词")
                     .font(BeansFont.appFont(12))
-                    .foregroundStyle(palette.secondary.opacity(0.75))
+                    .foregroundStyle(albumPreviewDimForeground)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity)
             } else {
@@ -782,12 +1139,13 @@ struct PlayerView: View {
                     HStack(spacing: 6) {
                         Text(item.isCurrent ? "●" : "·")
                             .font(BeansFont.appFont(8))
-                            .foregroundStyle(item.isCurrent ? palette.accent : palette.secondary.opacity(0.5))
+                            .foregroundStyle(item.isCurrent ? albumPreviewLyricColor : albumPreviewDimColor.opacity(0.5))
                         Text(item.text)
                             .font(BeansFont.appFont(12, item.isCurrent ? .semibold : .regular))
-                            .foregroundStyle(item.isCurrent ? palette.text : palette.secondary.opacity(0.8))
+                            .foregroundStyle(item.isCurrent ? albumPreviewForeground : albumPreviewDimForeground)
                             .lineLimit(1)
                             .minimumScaleFactor(0.7)
+                            .shadow(color: albumGlow(item.isCurrent ? albumPreviewLyricColor : albumPreviewDimColor), radius: albumTextGlow && item.isCurrent ? 8 : 0, y: 1)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -1123,32 +1481,13 @@ struct PlayerView: View {
                     )
             }
             .frame(width: size, height: size)
-        case .minimal:
-            ZStack {
-                if primary {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [controlAccent.opacity(0.92), controlAccent.opacity(0.58)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .shadow(color: controlAccent.opacity(0.32), radius: 14, y: 7)
-                } else if active {
-                    Circle()
-                        .fill(controlAccent.opacity(0.16))
-                } else {
-                    Circle()
-                        .fill(Color.white.opacity(0.001))
+        case .outline:
+            Circle()
+                .fill(Color.white.opacity(primary ? 0.10 : 0.001))
+                .overlay {
+                    Circle().strokeBorder((active || primary) ? controlAccent.opacity(0.72) : palette.secondary.opacity(0.38), lineWidth: primary ? 1.4 : 1.0)
                 }
-                Circle()
-                    .strokeBorder(
-                        primary ? .white.opacity(0.20) : (active ? controlAccent.opacity(0.42) : palette.secondary.opacity(0.18)),
-                        lineWidth: 0.8
-                    )
-            }
-            .frame(width: size, height: size)
+                .frame(width: size, height: size)
         }
     }
 
@@ -1262,7 +1601,8 @@ struct PlayerView: View {
         switch layoutPart {
         case .lyric:
             return -80...80
-        case .topBack, .topTitle, .topFavorite, .cover, .title, .previewLyric:
+        case .topBack, .topTitle, .topFavorite, .cover, .title, .previewLyric,
+             .controlCenter, .controlCenterCover, .controlCenterTitle, .controlCenterLyric, .controlCenterActions:
             return -180...180
         default:
             return -140...140
@@ -1274,7 +1614,9 @@ struct PlayerView: View {
         switch layoutPart {
         case .lyric: return -80...80
         case .topBack, .topTitle, .topFavorite: return -80...160
-        case .cover, .title, .previewLyric: return -220...220
+        case .cover, .title, .previewLyric,
+             .controlCenter, .controlCenterCover, .controlCenterTitle, .controlCenterLyric, .controlCenterActions:
+            return -220...220
         case .grabber: return -120...120
         default: return -300...300
         }
@@ -1323,7 +1665,7 @@ struct PlayerView: View {
             }
             layoutSlider("X", value: selectedLayoutEntry.x, range: layoutXRange)
             layoutSlider("Y", value: selectedLayoutEntry.y, range: layoutYRange)
-            layoutSlider("大小", value: selectedLayoutEntry.scale, range: 0.6...1.5, step: 0.05, format: "%.2f")
+            layoutSlider("大小", value: selectedLayoutEntry.scale, range: 0.3...1.5, step: 0.05, format: "%.2f")
             HStack(spacing: 10) {
                 Button {
                     resetCurrentLayoutPart()
@@ -1335,7 +1677,7 @@ struct PlayerView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
-                Text("编辑模式：顶部、封面、歌名、歌词和底部控件都可调")
+                Text("编辑模式：顶部、经典封面、控制中心、歌词和底部控件都可调")
                     .font(BeansFont.appFont(11))
                     .foregroundStyle(palette.secondary)
             }
@@ -1465,9 +1807,7 @@ struct PlayerView: View {
     }
 
     private func closePlayer() {
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.88)) {
-            isPresented = false
-        }
+        isPresented = false
     }
 
     /// 刷抖音式切歌：松手后旧封面继续飞出屏幕，新封面从对侧滑入（上滑下一首：旧向上飞、新从底部上来；下滑反之）
@@ -2136,7 +2476,13 @@ struct LyricPreset {
 struct PlayerSettingsSheet: View {
     @EnvironmentObject private var theme: ThemeStore
     @AppStorage("beans.playerBreath") private var breath = 0.6
+    @AppStorage("beans.playerDustMode") private var playerDustModeRaw = BeansPlayerDustMode.off.rawValue
+    @AppStorage("beans.playerDustDensity") private var playerDustDensity = 1.0
+    @AppStorage("beans.playerDustSize") private var playerDustSize = 1.0
     @AppStorage("beans.playerControlsUseCoverColor") private var controlsUseCoverColor = true
+    @AppStorage("beans.playerMainIconColorHex") private var playerMainIconColorHex = ""
+    @AppStorage("beans.playerSecondaryIconColorHex") private var playerSecondaryIconColorHex = ""
+    @AppStorage("beans.playerPrimaryButtonColorHex") private var playerPrimaryButtonColorHex = ""
     @AppStorage("beans.progressBarStyle") private var progressBarStyle = 0
     @AppStorage("beans.progressAccentHex") private var progressAccentHex = ""
     @AppStorage("beans.lyricFontSize") private var fontSize = 17
@@ -2169,12 +2515,20 @@ struct PlayerSettingsSheet: View {
     @AppStorage("beans.lyricBackground.syncCover") private var lyricBackgroundSyncCover = false
     @AppStorage("beans.audio.mixothers.v1") private var mixesWithOthers = false
     @AppStorage("beans.playerButtonStyle") private var playerButtonStyleRaw = BeansPlayerButtonStyle.glass.rawValue
+    @AppStorage("beans.albumTitleColorHex") private var albumTitleColorHex = ""
+    @AppStorage("beans.albumArtistColorHex") private var albumArtistColorHex = ""
+    @AppStorage("beans.albumPreviewLyricColorHex") private var albumPreviewLyricColorHex = ""
+    @AppStorage("beans.albumPreviewDimColorHex") private var albumPreviewDimColorHex = ""
+    @AppStorage("beans.albumTextGradient") private var albumTextGradient = false
+    @AppStorage("beans.albumTextGlow") private var albumTextGlow = false
+    @AppStorage("beans.albumTextGlowIntensity") private var albumTextGlowIntensity = 1.0
+    @AppStorage("beans.coverPlayerStyle") private var coverPlayerStyleRaw = BeansCoverPlayerStyle.classic.rawValue
     @Environment(\.dismiss) private var dismiss
-    @State private var playbackExpanded = true
-    @State private var lyricDisplayExpanded = true
-    @State private var lyricEffectExpanded = false
-    @State private var layoutExpanded = false
-    @State private var coverExpanded = false
+    @AppStorage("beans.playerSettings.playbackExpanded") private var playbackExpanded = false
+    @AppStorage("beans.playerSettings.lyricDisplayExpanded") private var lyricDisplayExpanded = false
+    @AppStorage("beans.playerSettings.lyricEffectExpanded") private var lyricEffectExpanded = false
+    @AppStorage("beans.playerSettings.layoutExpanded") private var layoutExpanded = false
+    @AppStorage("beans.playerSettings.coverExpanded") private var coverExpanded = false
     @State private var showLyricBackgroundPicker = false
 
     /// 左右倾斜文案：0 关闭，负值左倾、正值右倾
@@ -2267,6 +2621,126 @@ struct PlayerSettingsSheet: View {
         )
     }
 
+    private var playerMainIconColor: Binding<Color> {
+        Binding(
+            get: {
+                if playerMainIconColorHex.hasPrefix("#"), let c = Color(hex: playerMainIconColorHex) { return c }
+                return Color.beansLabel
+            },
+            set: { playerMainIconColorHex = "#" + UIColor($0).hexString }
+        )
+    }
+
+    private var playerSecondaryIconColor: Binding<Color> {
+        Binding(
+            get: {
+                if playerSecondaryIconColorHex.hasPrefix("#"), let c = Color(hex: playerSecondaryIconColorHex) { return c }
+                return Color.beansComment
+            },
+            set: { playerSecondaryIconColorHex = "#" + UIColor($0).hexString }
+        )
+    }
+
+    private var playerPrimaryButtonColor: Binding<Color> {
+        Binding(
+            get: {
+                if playerPrimaryButtonColorHex.hasPrefix("#"), let c = Color(hex: playerPrimaryButtonColorHex) { return c }
+                return Color.beansAmber
+            },
+            set: { playerPrimaryButtonColorHex = "#" + UIColor($0).hexString }
+        )
+    }
+
+    private var albumTitleColor: Binding<Color> {
+        Binding(
+            get: {
+                if albumTitleColorHex.hasPrefix("#"), let c = Color(hex: albumTitleColorHex) { return c }
+                return Color.beansLabel
+            },
+            set: { albumTitleColorHex = "#" + UIColor($0).hexString }
+        )
+    }
+
+    private var albumArtistColor: Binding<Color> {
+        Binding(
+            get: {
+                if albumArtistColorHex.hasPrefix("#"), let c = Color(hex: albumArtistColorHex) { return c }
+                return Color.beansComment
+            },
+            set: { albumArtistColorHex = "#" + UIColor($0).hexString }
+        )
+    }
+
+    private var albumPreviewLyricColor: Binding<Color> {
+        Binding(
+            get: {
+                if albumPreviewLyricColorHex.hasPrefix("#"), let c = Color(hex: albumPreviewLyricColorHex) { return c }
+                return Color.beansLabel
+            },
+            set: { albumPreviewLyricColorHex = "#" + UIColor($0).hexString }
+        )
+    }
+
+    private var albumPreviewDimColor: Binding<Color> {
+        Binding(
+            get: {
+                if albumPreviewDimColorHex.hasPrefix("#"), let c = Color(hex: albumPreviewDimColorHex) { return c }
+                return Color.beansComment
+            },
+            set: { albumPreviewDimColorHex = "#" + UIColor($0).hexString }
+        )
+    }
+
+    private var coverPlayerStyleSelector: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("封面页样式")
+                .font(BeansFont.appFont(13, .semibold))
+                .foregroundStyle(Color.beansLabel)
+            ForEach(BeansCoverPlayerStyle.allCases) { style in
+                let selected = coverPlayerStyleRaw == style.rawValue
+                Button {
+                    coverPlayerStyleRaw = style.rawValue
+                    BeansHaptics.select()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: style.icon)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(selected ? .white : Color.beansAmber)
+                            .frame(width: 32, height: 32)
+                            .background(selected ? Color.beansAmber : Color.beansAmber.opacity(0.12), in: Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(style.title)
+                                .font(BeansFont.appFont(13, .semibold))
+                                .foregroundStyle(Color.beansLabel)
+                            Text(style.subtitle)
+                                .font(BeansFont.appFont(11))
+                                .foregroundStyle(Color.beansComment)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        if selected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Color.beansAmber)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 9)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        selected ? Color.beansAmber.opacity(0.12) : Color.primary.opacity(0.035),
+                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(selected ? Color.beansAmber.opacity(0.42) : Color.beansComment.opacity(0.10), lineWidth: 0.8)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
     /// 渐变起始色：空值时自动用主题强调色
     private var gradStart: Binding<Color> {
         Binding(
@@ -2299,15 +2773,15 @@ struct PlayerSettingsSheet: View {
         let _ = theme.accent
         BeansNavigationStack {
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 12) {
                     playingCard
                     lyricDisplayCard
                     lyricEffectCard
                     layoutCard
                     coverCard
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
             .background {
                 GlassBackdrop(customColor: theme.backgroundSyncAll ? theme.customBackground : nil)
@@ -2381,9 +2855,9 @@ struct PlayerSettingsSheet: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            PlayerSettingsLiquidGlass(shape: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
+            .background {
+                PlayerSettingsLiquidGlass(shape: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
     }
 
     /// 开关行（标题 + 可选的短说明）
@@ -2425,6 +2899,27 @@ struct PlayerSettingsSheet: View {
                 settingToggle("控件跟随封面取色", isOn: $controlsUseCoverColor,
                               caption: "关闭后使用全局主题色")
                 Divider().opacity(0.35)
+                ColorPicker("顶部/底部主图标颜色", selection: playerMainIconColor, supportsOpacity: false)
+                    .font(BeansFont.appFont(13))
+                ColorPicker("顶部/底部次级图标颜色", selection: playerSecondaryIconColor, supportsOpacity: false)
+                    .font(BeansFont.appFont(13))
+                ColorPicker("播放按钮强调色", selection: playerPrimaryButtonColor, supportsOpacity: false)
+                    .font(BeansFont.appFont(13))
+                Button {
+                    playerMainIconColorHex = ""
+                    playerSecondaryIconColorHex = ""
+                    playerPrimaryButtonColorHex = ""
+                    BeansHaptics.select()
+                } label: {
+                    Text("恢复播放页控件颜色默认")
+                        .font(BeansFont.appFont(12, .semibold))
+                        .foregroundStyle(Color.beansAmber)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.beansAmber.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                Divider().opacity(0.35)
                 settingToggle("上下滑动切歌", isOn: $swipeSwitchSong,
                               caption: "上滑下一首，下滑上一首")
                 Divider().opacity(0.35)
@@ -2463,6 +2958,18 @@ struct PlayerSettingsSheet: View {
             settingSlider("背景光晕强度", valueText: "\(Int((breath * 100).rounded()))%") {
                 Slider(value: $breath, in: 0...1, step: 0.05)
                     .tint(Color.beansAmber)
+            }
+            Divider().opacity(0.5)
+            dustModeSelector
+            if playerDustModeRaw == BeansPlayerDustMode.snow.rawValue {
+                settingSlider("浮尘密度", valueText: String(format: "%.1fx", playerDustDensity)) {
+                    Slider(value: $playerDustDensity, in: 0.4...2.6, step: 0.1)
+                        .tint(Color.beansAmber)
+                }
+                settingSlider("浮尘大小", valueText: String(format: "%.1fx", playerDustSize)) {
+                    Slider(value: $playerDustSize, in: 0.8...2.8, step: 0.1)
+                        .tint(Color.beansAmber)
+                }
             }
             Divider().opacity(0.5)
             CompactSettingGroup {
@@ -2785,7 +3292,7 @@ struct PlayerSettingsSheet: View {
                     // 开启后直接回到播放页进行调节
                     if newValue { dismiss() }
                 }
-            ), caption: "开启后回到播放页，可拖动顶部栏、封面、歌名、预览歌词和底部控件")
+            ), caption: "开启后回到播放页，可拖动顶部栏、经典封面、控制中心、歌词和底部控件")
             Divider().opacity(0.5)
             settingToggle("显示底部指示线", isOn: $deckGrabberEnabled,
                           caption: "关闭后隐藏指示线，仍可上滑呼出评论区")
@@ -2816,11 +3323,97 @@ struct PlayerSettingsSheet: View {
     /// 封面卡片：圆形封面 / 旋转
     private var coverCard: some View {
         settingCard("封面", isExpanded: $coverExpanded) {
+            coverPlayerStyleSelector
+            Divider().opacity(0.5)
             settingToggle("圆形封面模式", isOn: $circularCover,
                           caption: "播放器封面与歌词页左上角封面显示为圆形")
             Divider().opacity(0.5)
             settingToggle("圆形封面旋转", isOn: $circularCoverSpin,
                           caption: "开启后播放时封面自动匀速旋转")
+            Divider().opacity(0.5)
+            CompactSettingGroup {
+                Text("封面页文字颜色")
+                    .font(BeansFont.appFont(13, .semibold))
+                    .foregroundStyle(Color.beansLabel)
+                Toggle("文字渐变", isOn: $albumTextGradient)
+                    .tint(Color.beansAmber)
+                    .font(BeansFont.appFont(13))
+                Toggle("文字高光", isOn: $albumTextGlow)
+                    .tint(Color.beansAmber)
+                    .font(BeansFont.appFont(13))
+                if albumTextGlow {
+                    settingSlider("高光强度", valueText: "\(Int((albumTextGlowIntensity * 100).rounded()))%") {
+                        Slider(value: $albumTextGlowIntensity, in: 0.2...2.0, step: 0.05)
+                            .tint(Color.beansAmber)
+                    }
+                }
+                Divider().opacity(0.35)
+                ColorPicker("歌名颜色", selection: albumTitleColor, supportsOpacity: false)
+                    .font(BeansFont.appFont(13))
+                ColorPicker("歌手颜色", selection: albumArtistColor, supportsOpacity: false)
+                    .font(BeansFont.appFont(13))
+                ColorPicker("预览歌词颜色", selection: albumPreviewLyricColor, supportsOpacity: false)
+                    .font(BeansFont.appFont(13))
+                ColorPicker("预览未播放颜色", selection: albumPreviewDimColor, supportsOpacity: false)
+                    .font(BeansFont.appFont(13))
+                Button {
+                    albumTitleColorHex = ""
+                    albumArtistColorHex = ""
+                    albumPreviewLyricColorHex = ""
+                    albumPreviewDimColorHex = ""
+                    albumTextGradient = false
+                    albumTextGlow = false
+                    albumTextGlowIntensity = 1.0
+                    BeansHaptics.select()
+                } label: {
+                    Text("恢复封面页文字默认")
+                        .font(BeansFont.appFont(12, .semibold))
+                        .foregroundStyle(Color.beansAmber)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.beansAmber.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var dustModeSelector: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("背景浮尘")
+                    .font(BeansFont.appFont(13, .semibold))
+                    .foregroundStyle(Color.beansLabel)
+                Text("关闭可隐藏播放页小白点，动态轻雪只在播放时运动")
+                    .font(BeansFont.appFont(12))
+                    .foregroundStyle(Color.beansComment)
+            }
+            HStack(spacing: 8) {
+                ForEach(BeansPlayerDustMode.allCases) { mode in
+                    let selected = playerDustModeRaw == mode.rawValue
+                    Button {
+                        playerDustModeRaw = mode.rawValue
+                        BeansHaptics.select()
+                    } label: {
+                        VStack(spacing: 5) {
+                            Image(systemName: mode.icon)
+                                .font(.system(size: 14, weight: .semibold))
+                            Text(mode.title)
+                                .font(BeansFont.appFont(11, .semibold))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+                        }
+                        .foregroundStyle(selected ? Color.white : Color.beansLabel)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(
+                            selected ? Color.beansAmber : Color.primary.opacity(0.045),
+                            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 
@@ -2862,7 +3455,7 @@ private struct PlayerSettingsLiquidGlass<S: Shape>: View {
     let shape: S
 
     private var uiStyle: BeansUIStyle {
-        BeansUIStyle(rawValue: uiStyleRaw) ?? .liquid
+        uiStyleRaw == "outline" ? .clear : (BeansUIStyle(rawValue: uiStyleRaw) ?? .liquid)
     }
 
     var body: some View {
@@ -2878,10 +3471,6 @@ private struct PlayerSettingsLiquidGlass<S: Shape>: View {
                 shape.fill(.ultraThinMaterial)
             case .compact:
                 shape.fill(Color.beansGlassFill.opacity(0.62))
-            case .outline:
-                shape
-                    .fill(Color.beansGlassFill.opacity(0.72))
-                    .overlay { shape.stroke(Color.beansAmber.opacity(0.30), lineWidth: 0.9) }
             }
         }
     }

@@ -311,8 +311,9 @@ final class KugouMusicAPI {
             guard id > 0 else { return nil }
             let name = Self.string(item["rankname"] ?? item["name"])
             guard !name.isEmpty else { return nil }
-            let cover = Self.string(item["album_img_9"] ?? item["img_9"] ?? item["imgurl"])
+            let cover = Self.normalizeURL(Self.string(item["album_img_9"] ?? item["img_9"] ?? item["imgurl"])
                 .replacingOccurrences(of: "{size}", with: "400")
+            )
             return KugouTopInfo(
                 id: id,
                 name: name,
@@ -325,8 +326,18 @@ final class KugouMusicAPI {
     /// 酷狗官方排行榜歌曲。
     func rankSongs(rankID: Int, limit: Int = 100) async throws -> [Song] {
         if let songs = try? await officialWebRankSongs(rankID: rankID, limit: limit), !songs.isEmpty {
+            guard songs.contains(where: { $0.coverURL == nil }) else { return songs }
+            if let mobileSongs = try? await mobileRankSongs(rankID: rankID, limit: limit), !mobileSongs.isEmpty {
+                let merged = Self.mergeRankCovers(primary: songs, fallback: mobileSongs)
+                BeansLogger.shared.log("酷狗排行榜封面补齐：rankid=\(rankID) 官网=\(songs.count) 移动端=\(mobileSongs.count)", level: .debug)
+                return merged
+            }
             return songs
         }
+        return try await mobileRankSongs(rankID: rankID, limit: limit)
+    }
+
+    private func mobileRankSongs(rankID: Int, limit: Int) async throws -> [Song] {
         var components = URLComponents(string: "https://m.kugou.com/rank/info")!
         components.queryItems = [
             URLQueryItem(name: "rankid", value: "\(rankID)"),
@@ -354,8 +365,9 @@ final class KugouMusicAPI {
             guard id > 0 else { return nil }
             let name = Self.string(item["specialname"] ?? item["name"] ?? item["title"])
             guard !name.isEmpty else { return nil }
-            let cover = Self.string(item["imgurl"] ?? item["pic"] ?? item["cover"])
+            let cover = Self.normalizeURL(Self.string(item["imgurl"] ?? item["pic"] ?? item["cover"])
                 .replacingOccurrences(of: "{size}", with: "400")
+            )
             return Playlist(
                 id: id,
                 name: name,
@@ -1199,7 +1211,10 @@ final class KugouMusicAPI {
         }
         guard !title.isEmpty, !hash.isEmpty || !albumAudioId.isEmpty else { return nil }
         let album = string(raw["album_name"] ?? raw["albumname"] ?? raw["album"] ?? (raw["albuminfo"] as? [String: Any])?["name"])
-        let cover = string(raw["pic"] ?? raw["img"] ?? raw["image"] ?? raw["cover"] ?? raw["album_sizable_cover"] ?? raw["sizable_cover"] ?? trans["union_cover"]).replacingOccurrences(of: "{size}", with: "300")
+        let cover = normalizeURL(
+            string(raw["pic"] ?? raw["img"] ?? raw["image"] ?? raw["cover"] ?? raw["album_sizable_cover"] ?? raw["sizable_cover"] ?? trans["union_cover"])
+                .replacingOccurrences(of: "{size}", with: "300")
+        )
         let durRaw = double(raw["timelength"] ?? raw["time_length"] ?? raw["timelen"] ?? raw["duration"] ?? raw["interval"])
         let seconds = durRaw > 1000 ? durRaw / 1000.0 : durRaw
         return Song(
@@ -1216,6 +1231,49 @@ final class KugouMusicAPI {
             kugouQualityHashes: qualityHashes.isEmpty ? nil : qualityHashes,
             fee: kugouVIPFee(raw)
         )
+    }
+
+    private static func mergeRankCovers(primary: [Song], fallback: [Song]) -> [Song] {
+        var byHash: [String: Song] = [:]
+        var byAudioId: [String: Song] = [:]
+        var byTitle: [String: Song] = [:]
+        for song in fallback where song.coverURL != nil {
+            if let hash = song.kugouHash?.lowercased(), !hash.isEmpty { byHash[hash] = song }
+            if let audioId = song.kugouAlbumAudioId, !audioId.isEmpty { byAudioId[audioId] = song }
+            byTitle[rankCoverMatchKey(song)] = song
+        }
+        return primary.map { song in
+            guard song.coverURL == nil else { return song }
+            let fallbackSong: Song?
+            if let hash = song.kugouHash?.lowercased(), !hash.isEmpty, let hit = byHash[hash] {
+                fallbackSong = hit
+            } else if let audioId = song.kugouAlbumAudioId, !audioId.isEmpty, let hit = byAudioId[audioId] {
+                fallbackSong = hit
+            } else {
+                fallbackSong = byTitle[rankCoverMatchKey(song)]
+            }
+            guard let coverURL = fallbackSong?.coverURL else { return song }
+            return Song(
+                id: song.id,
+                name: song.name,
+                artists: song.artists,
+                album: song.album,
+                coverURL: coverURL,
+                duration: song.duration,
+                source: song.source,
+                qqMid: song.qqMid,
+                qqMediaMid: song.qqMediaMid,
+                kugouHash: song.kugouHash,
+                kugouAlbumAudioId: song.kugouAlbumAudioId,
+                kugouAlbumId: song.kugouAlbumId,
+                kugouQualityHashes: song.kugouQualityHashes,
+                fee: song.fee
+            )
+        }
+    }
+
+    private static func rankCoverMatchKey(_ song: Song) -> String {
+        "\(song.name)|\(song.artists)".lowercased()
     }
 
     private static func qualityHashes(raw: [String: Any], trans: [String: Any]) -> [String: String] {

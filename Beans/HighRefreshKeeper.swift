@@ -1,29 +1,40 @@
-import Foundation
+import SwiftUI
+import UIKit
 
-/// 可选高刷新率保持器。配合 Info.plist 的 CADisableMinimumFrameDurationOnPhone 解开 60fps 上限。
+/// 全局高刷新率配置器。由 Info.plist 请求设备支持的最高刷新率，
+/// 不再创建常驻 CADisplayLink，避免设置页和其他页面持续空转发热。
 final class HighRefreshKeeper {
     static let shared = HighRefreshKeeper()
-    private var enabled = true
+    static let defaultsKey = "beans.enableHighRefresh"
 
     private init() {}
 
     static func registerDefaults() {
-        UserDefaults.standard.register(defaults: ["beans.enableHighRefresh": true])
+        UserDefaults.standard.register(defaults: [defaultsKey: true])
+        UserDefaults.standard.set(true, forKey: defaultsKey)
     }
 
     func configureFromDefaults() {
-        configure(enabled: UserDefaults.standard.bool(forKey: "beans.enableHighRefresh"))
+        configure(enabled: UserDefaults.standard.bool(forKey: Self.defaultsKey))
     }
 
     func configure(enabled: Bool) {
-        self.enabled = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.defaultsKey)
     }
 
-    func start() {
-        enabled = true
+    func attach(to view: UIView) {
+        _ = view
+    }
+}
+
+struct HighRefreshConfigurator: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.isUserInteractionEnabled = false
+        return view
     }
 
-    func stop() {
-        enabled = false
+    func updateUIView(_ uiView: UIView, context: Context) {
+        _ = uiView
     }
 }
